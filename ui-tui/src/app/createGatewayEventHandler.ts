@@ -113,6 +113,10 @@ export function createGatewayEventHandler(ctx: GatewayEventHandlerContext): (ev:
       })
       .catch((e: unknown) => turnController.pushActivity(`command catalog unavailable: ${rpcErrorMessage(e)}`, 'warn'))
 
+    if (getUiState().sid) {
+      return
+    }
+
     if (!STARTUP_RESUME_ID) {
       patchUiState({ status: 'forging session…' })
       newSession()

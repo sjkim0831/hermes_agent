@@ -100,6 +100,7 @@ export class GatewayClient extends EventEmitter {
     this.stderrRl = null
 
     if (this.proc && !this.proc.killed && this.proc.exitCode === null) {
+      appendGatewayLog('[start] killing previous live gateway before restart')
       this.proc.kill()
     }
 
@@ -227,8 +228,12 @@ export class GatewayClient extends EventEmitter {
     return this.logs.slice(-Math.max(1, limit)).join('\n')
   }
 
+  isRunning(): boolean {
+    return Boolean(this.proc?.stdin && !this.proc.killed && this.proc.exitCode === null)
+  }
+
   request<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-    if (!this.proc?.stdin || this.proc.killed || this.proc.exitCode !== null) {
+    if (!this.isRunning()) {
       this.start()
     }
 
