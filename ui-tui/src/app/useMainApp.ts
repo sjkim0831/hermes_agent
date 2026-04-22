@@ -447,10 +447,17 @@ export function useMainApp(gw: GatewayClient) {
   useEffect(() => {
     const handler = (ev: GatewayEvent) => onEventRef.current(ev)
 
-    const exitHandler = () => {
+    const exitHandler = (code?: number | null) => {
+      if (code === 0) {
+        patchUiState({ busy: false, sid: null, status: 'gateway restarted' })
+        turnController.pushActivity('gateway restarted after config change', 'info')
+        gw.start()
+        return
+      }
+
       patchUiState({ busy: false, sid: null, status: 'gateway exited' })
-      turnController.pushActivity('gateway exited · /logs to inspect', 'error')
-      sys('error: gateway exited')
+      turnController.pushActivity(`gateway exited${code == null ? '' : ` (${code})`} · /logs to inspect`, 'error')
+      sys(`error: gateway exited${code == null ? '' : ` (${code})`}`)
     }
 
     gw.on('event', handler)
