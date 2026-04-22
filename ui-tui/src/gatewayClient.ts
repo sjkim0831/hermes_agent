@@ -1,6 +1,7 @@
 import { type ChildProcess, spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { existsSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { delimiter, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 
@@ -10,6 +11,16 @@ const MAX_GATEWAY_LOG_LINES = 200
 const MAX_LOG_PREVIEW = 240
 const STARTUP_TIMEOUT_MS = Math.max(5000, parseInt(process.env.HERMES_TUI_STARTUP_TIMEOUT_MS ?? '15000', 10) || 15000)
 const REQUEST_TIMEOUT_MS = Math.max(30000, parseInt(process.env.HERMES_TUI_RPC_TIMEOUT_MS ?? '120000', 10) || 120000)
+const GATEWAY_LOG_FILE = process.env.HERMES_TUI_GATEWAY_LOG || resolve(homedir(), '.hermes/logs/tui-gateway.log')
+
+const appendGatewayLog = (line: string) => {
+  try {
+    mkdirSync(resolve(GATEWAY_LOG_FILE, '..'), { recursive: true })
+    appendFileSync(GATEWAY_LOG_FILE, `${new Date().toISOString()} ${line}\n`, 'utf8')
+  } catch {
+    // Keep the TUI usable even if the diagnostic log cannot be written.
+  }
+}
 
 const resolvePython = (root: string) => {
   const configured = process.env.HERMES_PYTHON?.trim() || process.env.PYTHON?.trim()
@@ -143,6 +154,7 @@ export class GatewayClient extends EventEmitter {
         this.readyTimer = null
       }
 
+      this.pushLog(`[exit] gateway exited${code === null ? '' : ` (${code})`}`)
       this.rejectPending(new Error(`gateway exited${code === null ? '' : ` (${code})`}`))
 
       if (this.subscribed) {
@@ -181,6 +193,8 @@ export class GatewayClient extends EventEmitter {
   }
 
   private pushLog(line: string) {
+    appendGatewayLog(line)
+
     if (this.logs.push(line) > MAX_GATEWAY_LOG_LINES) {
       this.logs.splice(0, this.logs.length - MAX_GATEWAY_LOG_LINES)
     }
