@@ -1,6 +1,6 @@
 import { withInkSuspended } from '@hermes/ink'
 
-import { launchHermesCommand, launchHermesOrchestratorCaptured, launchHermesOrchestratorCommand } from '../../../lib/externalCli.js'
+import { launchHermesCommand, launchHermesOrchestratorCaptured } from '../../../lib/externalCli.js'
 import type { LaunchResult } from '../../../lib/externalCli.js'
 import { patchOverlayState } from '../../overlayStore.js'
 import { runExternalSetup } from '../../setupHandoff.js'
@@ -38,9 +38,7 @@ export const setupCommands: SlashCommand[] = [
       let result: LaunchResult = { code: null }
 
       await withInkSuspended(async () => {
-        result = dryRun
-          ? await launchHermesOrchestratorCaptured(['--dry-run', task])
-          : await launchHermesOrchestratorCommand([task])
+        result = await launchHermesOrchestratorCaptured([...(dryRun ? ['--dry-run'] : []), task])
       })
 
       if (result.error) {

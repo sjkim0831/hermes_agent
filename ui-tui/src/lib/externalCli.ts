@@ -72,7 +72,10 @@ export const launchHermesOrchestratorCommand = (args: string[]): Promise<LaunchR
 export const launchHermesOrchestratorCaptured = (args: string[]): Promise<LaunchResult> =>
   new Promise(resolve => {
     const launch = resolveHermesOrchestratorLaunch(args)
-    const child = spawn(launch.file, launch.args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(launch.file, launch.args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, HERMES_ORCHESTRATOR_PROGRESS: '1' }
+    })
     let stdout = ''
     let stderr = ''
 
