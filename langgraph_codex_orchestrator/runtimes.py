@@ -30,6 +30,7 @@ class RuntimeResult:
     attempts: int
     credential_label: str = ""
     error: str = ""
+    rate_limited: bool = False
 
 
 class CodexWorkerRuntime:
@@ -109,6 +110,7 @@ class CodexWorkerRuntime:
                     attempts=attempts,
                     credential_label=entry.label,
                     error=detail,
+                    rate_limited=False,
                 )
             except subprocess.TimeoutExpired:
                 last_error = f"{self.command} timed out after {timeout_seconds}s"
@@ -123,6 +125,7 @@ class CodexWorkerRuntime:
             duration_seconds=0.0,
             attempts=attempts,
             error=last_error or "All runtime attempts failed.",
+            rate_limited=_is_rate_limited(last_error),
         )
 
 

@@ -8,6 +8,7 @@ import os
 import sys
 
 from .graph import _classify, build_graph
+from .telemetry import TelemetryStore
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -24,6 +25,11 @@ def main(argv: list[str] | None = None) -> int:
     task = " ".join(args.task).strip()
     if args.dry_run:
         payload = _classify({"task": task, "cwd": args.cwd})
+        telemetry = TelemetryStore()
+        payload["log_paths"] = {
+            "telemetry": str(telemetry.path),
+            "events": str(telemetry.event_log_path),
+        }
         if args.json:
             sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2))
             sys.stdout.write("\n")

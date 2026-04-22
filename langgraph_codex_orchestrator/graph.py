@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from typing import Any, Dict, List, TypedDict
 
 from .config import ROLE_NAMES, list_provider_slots, pick_default_model, summarize_capacity
@@ -32,6 +33,15 @@ class OrchestratorState(TypedDict, total=False):
     verification: str
     final_response: str
     telemetry_summary: Dict[str, Any]
+    stage_tasks: Dict[str, List[str]]
+
+
+@dataclass(frozen=True)
+class StageTask:
+    role: str
+    shard_index: int
+    shard_count: int
+    instruction: str
 
 
 def _summarize_results(results: List[RuntimeResult]) -> List[str]:
@@ -46,6 +56,72 @@ def _summarize_results(results: List[RuntimeResult]) -> List[str]:
             f"attempts={result.attempts} duration={result.duration_seconds:.2f}s\n{preview}"
         )
     return lines
+
+
+def _decompose_stage_tasks(state: OrchestratorState, role: str, workers: int) -> List[StageTask]:
+    task = str(state.get("task") or "").strip()
+    task_type = str(state.get("task_type") or "general")
+    base_hints: Dict[str, List[str]] = {
+        "finder": [
+            "Search likely route/page entrypoints",
+            "Search related components/templates",
+            "Search styles/assets/layout wrappers",
+            "Search existing similar screens and references",
+            "Search target output path requirements and desktop path details",
+        ],
+        "reader": [
+            "Read the best matching files from finder results",
+            "Extract structure, copy, and visual patterns",
+            "Extract constraints, data requirements, and surrounding flows",
+            "Identify reusable pieces to keep implementation consistent",
+        ],
+        "summarizer": [
+            "Condense findings into a build-ready brief",
+            "Remove duplicate findings and highlight only actionable context",
+            "Summarize file targets and implementation constraints",
+        ],
+        "implementer": [
+            "Create or modify the primary output artifact",
+            "Refine layout, styling, and content polish",
+            "Add missing supporting files only if required",
+        ],
+        "verifier": [
+            "Check expected files exist at the requested path",
+            "Verify requested content actually appears in the files",
+            "Report any remaining gap or mismatch",
+        ],
+    }
+    type_hints: Dict[str, List[str]] = {
+        "ui_design": [
+            "Focus on login/auth screens, hero sections, forms, CTA layout, and polished HTML/CSS output",
+            "Prefer concrete visual references over codebase-wide exhaustive search",
+        ],
+        "repo_search": [
+            "Bias toward broad code search coverage and path discovery",
+            "Split file search across route, service, UI, and asset patterns",
+        ],
+        "bug_fix": [
+            "Bias toward traces, failing code paths, and suspicious diffs",
+        ],
+    }
+
+    hints = list(base_hints.get(role, []))
+    hints.extend(type_hints.get(task_type, []))
+    if not hints:
+        hints = [f"Handle {role} work for the task."]
+
+    tasks: List[StageTask] = []
+    for index in range(workers):
+        hint = hints[index % len(hints)]
+        tasks.append(
+            StageTask(
+                role=role,
+                shard_index=index + 1,
+                shard_count=workers,
+                instruction=f"{hint}\nOriginal task: {task}",
+            )
+        )
+    return tasks
 
 
 def _preferred_model_for_role(role: str, runtime: CodexWorkerRuntime, state: OrchestratorState) -> str:
@@ -93,6 +169,13 @@ def _run_parallel_role(
 ) -> List[RuntimeResult]:
     task = state["task"]
     cwd = state.get("cwd") or None
+    telemetry = TelemetryStore()
+    stage_tasks = [
+        StageTask(role=role, shard_index=index + 1, shard_count=allocation.workers, instruction=item)
+        for index, item in enumerate((state.get("stage_tasks") or {}).get(role, []))
+    ]
+    if not stage_tasks:
+        stage_tasks = _decompose_stage_tasks(state, role, allocation.workers)
     prompt_base = (
         f"You are the {role} stage in a LangGraph Codex orchestration.\n"
         f"Task type: {state['task_type']}\n"
@@ -134,13 +217,51 @@ def _run_parallel_role(
         ]
     with ThreadPoolExecutor(max_workers=allocation.workers) as executor:
         future_map = {}
-        for index in range(allocation.workers):
-            runtime = runtimes[index % len(runtimes)]
-            shard_prompt = prompt_base + f"\n\nShard assignment: {index + 1}/{allocation.workers}"
-            future = executor.submit(runtime.run_prompt, shard_prompt, cwd=cwd, model=_preferred_model_for_role(role, runtime, state))
-            future_map[future] = runtime
+        for stage_task in stage_tasks:
+            ranked_runtimes = sorted(
+                runtimes,
+                key=lambda runtime: (
+                    runtime.slot.provider_family != "cerebras",
+                    runtime.slot.provider_id,
+                ),
+            )
+            runtime = min(
+                ranked_runtimes,
+                key=lambda item: telemetry.provider_penalty(
+                    item.slot.provider_id,
+                    _preferred_model_for_role(role, item, state),
+                ),
+            )
+            shard_prompt = (
+                prompt_base
+                + f"\n\nShard assignment: {stage_task.shard_index}/{stage_task.shard_count}"
+                + f"\nShard-specific objective:\n{stage_task.instruction}"
+            )
+            future = executor.submit(
+                runtime.run_prompt,
+                shard_prompt,
+                cwd=cwd,
+                model=_preferred_model_for_role(role, runtime, state),
+            )
+            future_map[future] = (runtime, stage_task)
         for future in as_completed(future_map):
-            results.append(future.result())
+            runtime, stage_task = future_map[future]
+            result = future.result()
+            telemetry.record_worker_result(
+                task_type=str(state.get("task_type") or "general"),
+                role=role,
+                provider_family=runtime.slot.provider_family,
+                provider_id=result.provider_id or runtime.slot.provider_id,
+                model=result.model or _preferred_model_for_role(role, runtime, state),
+                credential_label=result.credential_label,
+                duration_seconds=result.duration_seconds,
+                success=result.ok,
+                rate_limited=result.rate_limited,
+                shard_index=stage_task.shard_index,
+                shard_task=stage_task.instruction,
+                error=result.error,
+            )
+            results.append(result)
     return results
 
 
@@ -169,6 +290,10 @@ def _classify(state: OrchestratorState) -> OrchestratorState:
             token_limit=role_alloc.token_limit,
             overload_ratio=role_alloc.overload_ratio,
         )
+    stage_tasks = {
+        role: [task.instruction for task in _decompose_stage_tasks(state, role, allocations[role].workers)]
+        for role in ROLE_NAMES
+    }
     return {
         **state,
         "task_type": task_type,
@@ -179,6 +304,7 @@ def _classify(state: OrchestratorState) -> OrchestratorState:
             "gemini": summarize_capacity(gemini_slots),
             "cerebras": summarize_capacity(cerebras_slots),
         },
+        "stage_tasks": stage_tasks,
     }
 
 
@@ -193,6 +319,7 @@ def _supervisor_plan(state: OrchestratorState) -> OrchestratorState:
         f"Difficulty: {state['difficulty']}/5\n"
         f"Estimated tokens: {state['estimated_tokens']}\n"
         f"Current allocations: {state['allocations']}\n\n"
+        f"Current stage shards: {state.get('stage_tasks')}\n\n"
         f"User task:\n{state['task']}"
     )
     result: RuntimeResult | None = None
@@ -216,16 +343,19 @@ def _stage_node(role: str, provider_family: str):
         allocation = StageAllocation(**allocations[role])
         runtimes = build_family_runtimes(list_provider_slots(provider_family), provider_family)
         results = _run_parallel_role(role, state, runtimes, allocation)
-        for result in results:
-            telemetry.record_stage(
-                task_type=state["task_type"],
-                role=role,
-                duration_seconds=result.duration_seconds,
-                success=result.ok,
-                token_estimate=state["estimated_tokens"],
-                worker_count=allocation.workers,
-                provider_family=provider_family,
-            )
+        quota_failures = sum(1 for result in results if result.rate_limited)
+        total_duration = sum(result.duration_seconds for result in results)
+        telemetry.record_stage(
+            task_type=state["task_type"],
+            role=role,
+            duration_seconds=total_duration,
+            success=all(result.ok for result in results) if results else False,
+            token_estimate=state["estimated_tokens"],
+            worker_count=allocation.workers,
+            provider_family=provider_family,
+            quota_failures=quota_failures,
+            task_signature=str((state.get("stage_tasks") or {}).get(role, []))[:200],
+        )
         key = "implementation" if role == "implementer" else ("verification" if role == "verifier" else "findings")
         current: List[str] = list(state.get(key, [])) if isinstance(state.get(key), list) else []
         additions = _summarize_results(results)

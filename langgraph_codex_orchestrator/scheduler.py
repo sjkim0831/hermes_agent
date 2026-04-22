@@ -68,6 +68,8 @@ def _telemetry_multiplier(telemetry: TelemetryStore, task_type: str, role: str) 
         multiplier += min(1.5, stats["avg_duration_seconds"] / 180.0)
     if stats["success_rate"] and stats["success_rate"] < 0.75:
         multiplier += 0.25
+    if stats["quota_failure_rate"] > 0.1:
+        multiplier += min(1.0, stats["quota_failure_rate"] * 2.0)
     if stats["last_worker_count"]:
         multiplier += min(0.5, stats["last_worker_count"] / 40.0)
     return multiplier
