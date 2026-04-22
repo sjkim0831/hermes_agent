@@ -59,7 +59,10 @@ The installer refreshes only machine-local config:
 ## Account selection
 
 Hermes model/provider selection shows `Cerebras API 101`, `Cerebras API 102`,
-and so on. Each entry reads a different environment variable from
-`~/.hermes/.env`, for example `CEREBRAS_API_KEY_101`.
+and so on through `Cerebras API 119`. Each entry reads a different environment
+variable from `~/.hermes/.env`, for example `CEREBRAS_API_KEY_101`.
+
+Each Cerebras slot exposes both `qwen-3-235b-a22b-instruct-2507` and
+`llama3.1-8b` in the model picker, with Qwen remaining the default.
 
 Do not commit real API keys.

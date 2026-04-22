@@ -146,6 +146,7 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
         "fireworks/minimax-m2p5",
     ],
     "cerebras": [
+        "llama3.1-8b",
         "qwen-3-235b-a22b-instruct-2507",
     ],
     "zai": [

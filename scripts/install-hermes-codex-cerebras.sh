@@ -10,8 +10,9 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 CONFIG_PATH="${HERMES_CONFIG_PATH:-$HERMES_HOME/config.yaml}"
 ENV_PATH="${HERMES_ENV_PATH:-$HERMES_HOME/.env}"
-CEREBRAS_ACCOUNT_COUNT="${CEREBRAS_ACCOUNT_COUNT:-18}"
+CEREBRAS_ACCOUNT_COUNT="${CEREBRAS_ACCOUNT_COUNT:-19}"
 CEREBRAS_MODEL="${CEREBRAS_MODEL:-qwen-3-235b-a22b-instruct-2507}"
+CEREBRAS_ALT_MODEL="${CEREBRAS_ALT_MODEL:-llama3.1-8b}"
 GEMINI_ACCOUNT_COUNT="${GEMINI_ACCOUNT_COUNT:-18}"
 GEMINI_MODEL="${GEMINI_MODEL:-gemini-2.5-flash}"
 
@@ -40,7 +41,7 @@ else
   done
 fi
 
-export CONFIG_PATH CEREBRAS_ACCOUNT_COUNT CEREBRAS_MODEL GEMINI_ACCOUNT_COUNT GEMINI_MODEL
+export CONFIG_PATH CEREBRAS_ACCOUNT_COUNT CEREBRAS_MODEL CEREBRAS_ALT_MODEL GEMINI_ACCOUNT_COUNT GEMINI_MODEL
 python3 - <<'PY'
 import os
 from pathlib import Path
@@ -50,6 +51,7 @@ import yaml
 config_path = Path(os.environ["CONFIG_PATH"])
 cerebras_account_count = int(os.environ["CEREBRAS_ACCOUNT_COUNT"])
 cerebras_model_name = os.environ["CEREBRAS_MODEL"]
+cerebras_alt_model_name = os.environ["CEREBRAS_ALT_MODEL"]
 gemini_account_count = int(os.environ["GEMINI_ACCOUNT_COUNT"])
 gemini_model_name = os.environ["GEMINI_MODEL"]
 
@@ -68,12 +70,19 @@ model.pop("base_url", None)
 model.pop("api_key", None)
 
 providers = []
+cerebras_models = []
+for candidate in (cerebras_model_name, cerebras_alt_model_name):
+    candidate = str(candidate or "").strip()
+    if candidate and candidate not in cerebras_models:
+        cerebras_models.append(candidate)
+
 for i in range(101, 101 + cerebras_account_count):
     providers.append({
         "name": f"Cerebras API {i}",
         "base_url": "https://api.cerebras.ai/v1",
         "key_env": f"CEREBRAS_API_KEY_{i}",
         "model": cerebras_model_name,
+        "models": cerebras_models,
         "api_mode": "chat_completions",
         "provider_key": "codex-cerebras-cli",
     })

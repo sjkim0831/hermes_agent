@@ -7,17 +7,170 @@ custom_providers:
   base_url: https://api.cerebras.ai/v1
   key_env: CEREBRAS_API_KEY_101
   model: qwen-3-235b-a22b-instruct-2507
+  models:
+  - qwen-3-235b-a22b-instruct-2507
+  - llama3.1-8b
   api_mode: chat_completions
   provider_key: codex-cerebras-cli
 - name: Cerebras API 102
   base_url: https://api.cerebras.ai/v1
   key_env: CEREBRAS_API_KEY_102
   model: qwen-3-235b-a22b-instruct-2507
+  models:
+  - qwen-3-235b-a22b-instruct-2507
+  - llama3.1-8b
   api_mode: chat_completions
   provider_key: codex-cerebras-cli
 - name: Cerebras API 103
   base_url: https://api.cerebras.ai/v1
   key_env: CEREBRAS_API_KEY_103
   model: qwen-3-235b-a22b-instruct-2507
+  models:
+  - qwen-3-235b-a22b-instruct-2507
+  - llama3.1-8b
+  api_mode: chat_completions
+  provider_key: codex-cerebras-cli
+- name: Cerebras API 104
+  base_url: https://api.cerebras.ai/v1
+  key_env: CEREBRAS_API_KEY_104
+  model: qwen-3-235b-a22b-instruct-2507
+  models:
+  - qwen-3-235b-a22b-instruct-2507
+  - llama3.1-8b
+  api_mode: chat_completions
+  provider_key: codex-cerebras-cli
+- name: Cerebras API 105
+  base_url: https://api.cerebras.ai/v1
+  key_env: CEREBRAS_API_KEY_105
+  model: qwen-3-235b-a22b-instruct-2507
+  models:
+  - qwen-3-235b-a22b-instruct-2507
+  - llama3.1-8b
+  api_mode: chat_completions
+  provider_key: codex-cerebras-cli
+- name: Cerebras API 106
+  base_url: https://api.cerebras.ai/v1
+  key_env: CEREBRAS_API_KEY_106
+  model: qwen-3-235b-a22b-instruct-2507
+  models:
+  - qwen-3-235b-a22b-instruct-2507
+  - llama3.1-8b
+  api_mode: chat_completions
+  provider_key: codex-cerebras-cli
+- name: Cerebras API 107
+  base_url: https://api.cerebras.ai/v1
+  key_env: CEREBRAS_API_KEY_107
+  model: qwen-3-235b-a22b-instruct-2507
+  models:
+  - qwen-3-235b-a22b-instruct-2507
+  - llama3.1-8b
+  api_mode: chat_completions
+  provider_key: codex-cerebras-cli
+- name: Cerebras API 108
+  base_url: https://api.cerebras.ai/v1
+  key_env: CEREBRAS_API_KEY_108
+  model: qwen-3-235b-a22b-instruct-2507
+  models:
+  - qwen-3-235b-a22b-instruct-2507
+  - llama3.1-8b
+  api_mode: chat_completions
+  provider_key: codex-cerebras-cli
+- name: Cerebras API 109
+  base_url: https://api.cerebras.ai/v1
+  key_env: CEREBRAS_API_KEY_109
+  model: qwen-3-235b-a22b-instruct-2507
+  models:
+  - qwen-3-235b-a22b-instruct-2507
+  - llama3.1-8b
+  api_mode: chat_completions
+  provider_key: codex-cerebras-cli
+- name: Cerebras API 110
+  base_url: https://api.cerebras.ai/v1
+  key_env: CEREBRAS_API_KEY_110
+  model: qwen-3-235b-a22b-instruct-2507
+  models:
+  - qwen-3-235b-a22b-instruct-2507
+  - llama3.1-8b
+  api_mode: chat_completions
+  provider_key: codex-cerebras-cli
+- name: Cerebras API 111
+  base_url: https://api.cerebras.ai/v1
+  key_env: CEREBRAS_API_KEY_111
+  model: qwen-3-235b-a22b-instruct-2507
+  models:
+  - qwen-3-235b-a22b-instruct-2507
+  - llama3.1-8b
+  api_mode: chat_completions
+  provider_key: codex-cerebras-cli
+- name: Cerebras API 112
+  base_url: https://api.cerebras.ai/v1
+  key_env: CEREBRAS_API_KEY_112
+  model: qwen-3-235b-a22b-instruct-2507
+  models:
+  - qwen-3-235b-a22b-instruct-2507
+  - llama3.1-8b
+  api_mode: chat_completions
+  provider_key: codex-cerebras-cli
+- name: Cerebras API 113
+  base_url: https://api.cerebras.ai/v1
+  key_env: CEREBRAS_API_KEY_113
+  model: qwen-3-235b-a22b-instruct-2507
+  models:
+  - qwen-3-235b-a22b-instruct-2507
+  - llama3.1-8b
+  api_mode: chat_completions
+  provider_key: codex-cerebras-cli
+- name: Cerebras API 114
+  base_url: https://api.cerebras.ai/v1
+  key_env: CEREBRAS_API_KEY_114
+  model: qwen-3-235b-a22b-instruct-2507
+  models:
+  - qwen-3-235b-a22b-instruct-2507
+  - llama3.1-8b
+  api_mode: chat_completions
+  provider_key: codex-cerebras-cli
+- name: Cerebras API 115
+  base_url: https://api.cerebras.ai/v1
+  key_env: CEREBRAS_API_KEY_115
+  model: qwen-3-235b-a22b-instruct-2507
+  models:
+  - qwen-3-235b-a22b-instruct-2507
+  - llama3.1-8b
+  api_mode: chat_completions
+  provider_key: codex-cerebras-cli
+- name: Cerebras API 116
+  base_url: https://api.cerebras.ai/v1
+  key_env: CEREBRAS_API_KEY_116
+  model: qwen-3-235b-a22b-instruct-2507
+  models:
+  - qwen-3-235b-a22b-instruct-2507
+  - llama3.1-8b
+  api_mode: chat_completions
+  provider_key: codex-cerebras-cli
+- name: Cerebras API 117
+  base_url: https://api.cerebras.ai/v1
+  key_env: CEREBRAS_API_KEY_117
+  model: qwen-3-235b-a22b-instruct-2507
+  models:
+  - qwen-3-235b-a22b-instruct-2507
+  - llama3.1-8b
+  api_mode: chat_completions
+  provider_key: codex-cerebras-cli
+- name: Cerebras API 118
+  base_url: https://api.cerebras.ai/v1
+  key_env: CEREBRAS_API_KEY_118
+  model: qwen-3-235b-a22b-instruct-2507
+  models:
+  - qwen-3-235b-a22b-instruct-2507
+  - llama3.1-8b
+  api_mode: chat_completions
+  provider_key: codex-cerebras-cli
+- name: Cerebras API 119
+  base_url: https://api.cerebras.ai/v1
+  key_env: CEREBRAS_API_KEY_119
+  model: qwen-3-235b-a22b-instruct-2507
+  models:
+  - qwen-3-235b-a22b-instruct-2507
+  - llama3.1-8b
   api_mode: chat_completions
   provider_key: codex-cerebras-cli

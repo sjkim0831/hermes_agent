@@ -94,4 +94,4 @@ def test_static_model_fallbacks_exist():
 
     assert _PROVIDER_MODELS["groq"] == ["openai/gpt-oss-120b"]
     assert _PROVIDER_MODELS["fireworks"] == ["fireworks/minimax-m2p5"]
-    assert _PROVIDER_MODELS["cerebras"] == ["qwen-3-235b-a22b-instruct-2507"]
+    assert _PROVIDER_MODELS["cerebras"] == ["llama3.1-8b", "qwen-3-235b-a22b-instruct-2507"]
