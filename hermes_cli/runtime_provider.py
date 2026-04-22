@@ -421,6 +421,19 @@ def _resolve_named_custom_runtime(
             result["model"] = model_name
         return result
 
+    if provider_key == "gemini":
+        result = {
+            "provider": "gemini",
+            "api_mode": "chat_completions",
+            "base_url": base_url or PROVIDER_REGISTRY["gemini"].inference_base_url,
+            "api_key": api_key or "no-key-required",
+            "source": f"custom_provider:{custom_provider.get('name', requested_provider)}",
+        }
+        model_name = custom_provider.get("model")
+        if model_name:
+            result["model"] = model_name
+        return result
+
     # Check if a credential pool exists for this custom endpoint
     pool_result = _try_resolve_from_custom_pool(base_url, "custom", custom_provider.get("api_mode"))
     if pool_result:

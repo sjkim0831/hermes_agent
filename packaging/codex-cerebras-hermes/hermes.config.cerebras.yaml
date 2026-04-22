@@ -21,3 +21,21 @@ custom_providers:
   model: qwen-3-235b-a22b-instruct-2507
   api_mode: chat_completions
   provider_key: codex-cerebras-cli
+- name: Gemini API 101
+  base_url: https://generativelanguage.googleapis.com/v1beta
+  key_env: GEMINI_API_KEY_101
+  model: gemini-2.5-pro
+  api_mode: chat_completions
+  provider_key: gemini
+- name: Gemini API 102
+  base_url: https://generativelanguage.googleapis.com/v1beta
+  key_env: GEMINI_API_KEY_102
+  model: gemini-2.5-pro
+  api_mode: chat_completions
+  provider_key: gemini
+- name: Gemini API 103
+  base_url: https://generativelanguage.googleapis.com/v1beta
+  key_env: GEMINI_API_KEY_103
+  model: gemini-2.5-pro
+  api_mode: chat_completions
+  provider_key: gemini
