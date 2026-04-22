@@ -1800,6 +1800,9 @@ class AIAgent:
         self.provider = new_provider
         self.base_url = base_url or self.base_url
         self.api_mode = api_mode
+        if new_provider == "codex-cerebras-cli":
+            self.acp_command = ""
+            self.acp_args = []
         if api_key:
             self.api_key = api_key
 

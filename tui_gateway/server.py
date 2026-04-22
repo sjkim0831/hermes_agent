@@ -384,9 +384,6 @@ def resolve_skin() -> dict:
 
 
 def _resolve_model() -> str:
-    env = os.environ.get("HERMES_MODEL", "")
-    if env:
-        return env
     try:
         from hermes_cli.runtime_provider import resolve_runtime_provider
 
@@ -395,6 +392,9 @@ def _resolve_model() -> str:
             return runtime_model
     except Exception:
         pass
+    env = os.environ.get("HERMES_MODEL", "")
+    if env:
+        return env
     m = _load_cfg().get("model", "")
     if isinstance(m, dict):
         return m.get("default", "")
@@ -502,6 +502,17 @@ def _persist_model_switch(result, provider_override: str = "") -> None:
     save_config(cfg)
 
 
+def _runtime_provider_request(result, provider_override: str = "") -> str:
+    if provider_override.startswith("custom:"):
+        return provider_override
+    source = str(getattr(result, "source", "") or "")
+    if source.startswith("custom_provider:"):
+        provider_label = source.split(":", 1)[1].strip().lower().replace(" ", "-")
+        if provider_label:
+            return f"custom:{provider_label}"
+    return result.target_provider
+
+
 def _apply_model_switch(sid: str, session: dict, raw_input: str) -> dict:
     from hermes_cli.model_switch import parse_model_flags, switch_model
     from hermes_cli.runtime_provider import resolve_runtime_provider
@@ -510,6 +521,7 @@ def _apply_model_switch(sid: str, session: dict, raw_input: str) -> dict:
     if not model_input:
         raise ValueError("model value required")
 
+    cfg = _load_cfg()
     agent = session.get("agent")
     if agent:
         current_provider = getattr(agent, "provider", "") or ""
@@ -545,15 +557,15 @@ def _apply_model_switch(sid: str, session: dict, raw_input: str) -> dict:
             base_url=result.base_url,
             api_mode=result.api_mode,
         )
+        agent._hermes_selected_provider = _runtime_provider_request(result, explicit_provider)
         _restart_slash_worker(session)
         _emit("session.info", sid, _session_info(agent))
 
-    os.environ["HERMES_MODEL"] = result.new_model
-    if persist_global:
-        _persist_model_switch(
-            result,
-            provider_override=explicit_provider if explicit_provider.startswith("custom:") else "",
-        )
+    os.environ.pop("HERMES_MODEL", None)
+    _persist_model_switch(
+        result,
+        provider_override=explicit_provider if explicit_provider.startswith("custom:") else "",
+    )
     return {"value": result.new_model, "warning": result.warning_message or ""}
 
 
