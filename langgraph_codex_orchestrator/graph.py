@@ -258,6 +258,7 @@ def _plan_stage_tasks_with_header(
     desired_count: int,
 ) -> List[StageTask]:
     planner_count = _header_plan_task_count(desired_count)
+    _progress(f"planning {planner_count} seed tasks for stage: {role} (target shards={desired_count})")
     fallback = _decompose_stage_tasks(state, role, planner_count)
     prompt = (
         "You are the stage-header planner in a LangGraph orchestration.\n"
@@ -285,18 +286,24 @@ def _plan_stage_tasks_with_header(
         planner_runtimes = build_family_runtimes(list_provider_slots("cerebras"), "cerebras")
     result: RuntimeResult | None = None
     for runtime in planner_runtimes:
+        _progress(
+            f"stage-header planner attempt for {role}: provider={runtime.slot.provider_id} model={pick_default_model(runtime.slot)}"
+        )
         result = runtime.run_fast_prompt(
             prompt,
             model=pick_default_model(runtime.slot),
             timeout_seconds=60.0,
         )
         if result.ok:
+            _progress(f"stage-header planner succeeded for {role}: provider={runtime.slot.provider_id}")
             break
     if result is None or not result.ok:
+        _progress(f"stage-header planner fallback for {role}: using local shard template")
         return fallback
 
     rows = _extract_json_array(result.text)
     if not rows:
+        _progress(f"stage-header planner returned no structured rows for {role}; using fallback template")
         return fallback
 
     tasks: List[StageTask] = []
@@ -320,6 +327,7 @@ def _plan_stage_tasks_with_header(
             )
         )
     if not tasks:
+        _progress(f"stage-header planner produced no usable rows for {role}; expanding fallback template")
         return _expand_seed_tasks(role, desired_count, fallback)
     while len(tasks) < planner_count:
         next_index = len(tasks) + 1
@@ -467,10 +475,14 @@ def _run_parallel_role(
                 error=f"No runtimes configured for role {role}.",
             )
         ]
+    _progress(
+        f"dispatching stage {role}: runtimes={len(runtimes)} active_workers={dispatch_workers} planned_shards={len(stage_tasks)}"
+    )
     with ThreadPoolExecutor(max_workers=max(1, dispatch_workers)) as executor:
         pending_tasks = list(stage_tasks)
         available_runtimes = list(runtimes)
         future_map = {}
+        completed = 0
 
         def schedule_one(runtime: CodexWorkerRuntime, stage_task: StageTask) -> None:
             shard_prompt = (
@@ -487,6 +499,10 @@ def _run_parallel_role(
                 model=_preferred_model_for_role(role, runtime, state),
             )
             future_map[future] = (runtime, stage_task)
+            _progress(
+                f"stage {role}: assigned shard {stage_task.shard_index}/{stage_task.shard_count} "
+                f"to {runtime.slot.provider_id} model={_preferred_model_for_role(role, runtime, state)}"
+            )
 
         while pending_tasks and available_runtimes and len(future_map) < dispatch_workers:
             runtime = available_runtimes.pop(0)
@@ -497,6 +513,7 @@ def _run_parallel_role(
             for future in done:
                 runtime, stage_task = future_map.pop(future)
                 result = future.result()
+                completed += 1
                 telemetry.record_worker_result(
                     task_type=str(state.get("task_type") or "general"),
                     role=role,
@@ -512,6 +529,12 @@ def _run_parallel_role(
                     error=result.error,
                 )
                 results.append(result)
+                _progress(
+                    f"stage {role}: completed shard {stage_task.shard_index}/{stage_task.shard_count} "
+                    f"via {result.provider_id or runtime.slot.provider_id} "
+                    f"status={'ok' if result.ok else 'error'} "
+                    f"completed={completed}/{len(stage_tasks)}"
+                )
                 if not result.budget_blocked and not result.rate_limited:
                     available_runtimes.append(runtime)
 
