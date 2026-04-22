@@ -1,6 +1,6 @@
 import { withInkSuspended } from '@hermes/ink'
 
-import { launchHermesCommand, launchHermesOrchestratorCaptured } from '../../../lib/externalCli.js'
+import { launchHermesCommand, launchHermesOrchestratorCaptured, launchHermesOrchestratorStreaming } from '../../../lib/externalCli.js'
 import type { LaunchResult } from '../../../lib/externalCli.js'
 import { patchOverlayState } from '../../overlayStore.js'
 import { runExternalSetup } from '../../setupHandoff.js'
@@ -35,7 +35,18 @@ export const setupCommands: SlashCommand[] = [
 
       ctx.transcript.sys(`launching \`hermes-orchestrator ${dryRun ? '--dry-run ' : ''}${task}\`…`)
 
-      const result: LaunchResult = await launchHermesOrchestratorCaptured([...(dryRun ? ['--dry-run'] : []), task])
+      const seenProgress = new Set<string>()
+      const result: LaunchResult = dryRun
+        ? await launchHermesOrchestratorCaptured(['--dry-run', task])
+        : await launchHermesOrchestratorStreaming([task], {
+            onStderrLine: line => {
+              if (!line || seenProgress.has(line)) {
+                return
+              }
+              seenProgress.add(line)
+              ctx.transcript.sys(line)
+            }
+          })
 
       if (result.error) {
         ctx.transcript.sys(`error launching hermes-orchestrator: ${result.error}`)
@@ -50,7 +61,7 @@ export const setupCommands: SlashCommand[] = [
         return
       }
 
-      const output = [result.stdout, result.stderr].filter(Boolean).join('\n').trim()
+      const output = dryRun ? [result.stdout, result.stderr].filter(Boolean).join('\n').trim() : (result.stdout || '').trim()
       if (output) {
         const long = output.length > 180 || output.split('\n').filter(Boolean).length > 2
         if (long) {
@@ -58,6 +69,8 @@ export const setupCommands: SlashCommand[] = [
         } else {
           ctx.transcript.sys(output)
         }
+      } else if (!dryRun && result.stderr?.trim()) {
+        ctx.transcript.sys(result.stderr.trim())
       } else {
         ctx.transcript.sys('orchestrator completed with no output')
       }

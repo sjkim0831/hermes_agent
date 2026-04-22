@@ -7,6 +7,11 @@ export interface LaunchResult {
   stdout?: string
 }
 
+interface StreamHandlers {
+  onStderrLine?: (line: string) => void
+  onStdoutLine?: (line: string) => void
+}
+
 interface LaunchSpec {
   args: string[]
   file: string
@@ -88,4 +93,58 @@ export const launchHermesOrchestratorCaptured = (args: string[]): Promise<Launch
 
     child.on('error', err => resolve({ code: null, error: err.message, stderr, stdout }))
     child.on('exit', code => resolve({ code, stderr, stdout }))
+  })
+
+export const launchHermesOrchestratorStreaming = (
+  args: string[],
+  handlers: StreamHandlers = {}
+): Promise<LaunchResult> =>
+  new Promise(resolve => {
+    const launch = resolveHermesOrchestratorLaunch(args)
+    const child = spawn(launch.file, launch.args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, HERMES_ORCHESTRATOR_PROGRESS: '1' }
+    })
+    let stdout = ''
+    let stderr = ''
+    let stdoutBuf = ''
+    let stderrBuf = ''
+
+    const flushLines = (buffer: string, emit?: (line: string) => void) => {
+      const parts = buffer.split(/\r?\n/)
+      const carry = parts.pop() ?? ''
+      for (const line of parts) {
+        const trimmed = line.trim()
+        if (trimmed && emit) {
+          emit(trimmed)
+        }
+      }
+      return carry
+    }
+
+    child.stdout?.on('data', chunk => {
+      const text = String(chunk)
+      stdout += text
+      stdoutBuf += text
+      stdoutBuf = flushLines(stdoutBuf, handlers.onStdoutLine)
+    })
+    child.stderr?.on('data', chunk => {
+      const text = String(chunk)
+      stderr += text
+      stderrBuf += text
+      stderrBuf = flushLines(stderrBuf, handlers.onStderrLine)
+    })
+
+    child.on('error', err => resolve({ code: null, error: err.message, stderr, stdout }))
+    child.on('close', code => {
+      const pendingStdout = stdoutBuf.trim()
+      const pendingStderr = stderrBuf.trim()
+      if (pendingStdout && handlers.onStdoutLine) {
+        handlers.onStdoutLine(pendingStdout)
+      }
+      if (pendingStderr && handlers.onStderrLine) {
+        handlers.onStderrLine(pendingStderr)
+      }
+      resolve({ code, stderr, stdout })
+    })
   })
