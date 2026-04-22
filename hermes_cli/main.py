@@ -2728,6 +2728,7 @@ def _model_flow_named_custom(config, provider_info):
     key_env = provider_info.get("key_env", "")
     saved_model = provider_info.get("model", "")
     provider_key = (provider_info.get("provider_key") or "").strip()
+    selected_custom_slug = "custom:" + name.lower().replace(" ", "-")
 
     print(f"  Provider: {name}")
     print(f"  URL:      {base_url}")
@@ -2815,7 +2816,7 @@ def _model_flow_named_custom(config, provider_info):
         model = {"default": model} if model else {}
     cfg["model"] = model
     if provider_key:
-        model["provider"] = key if provider_key in {"codex-cerebras-cli", "codex-gemini-cli"} else provider_key
+        model["provider"] = selected_custom_slug if provider_key in {"codex-cerebras-cli", "codex-gemini-cli"} else provider_key
         model.pop("base_url", None)
         model.pop("api_key", None)
     else:
@@ -2833,8 +2834,27 @@ def _model_flow_named_custom(config, provider_info):
     deactivate_provider()
 
     # Persist the selected model back to whichever schema owns this endpoint.
-    if provider_key:
-        cfg = load_config()
+    cfg = load_config()
+    updated = False
+    custom_providers_cfg = cfg.get("custom_providers")
+    if isinstance(custom_providers_cfg, list):
+        for entry in custom_providers_cfg:
+            if not isinstance(entry, dict):
+                continue
+            entry_name = str(entry.get("name", "") or "").strip()
+            if entry_name != name:
+                continue
+            entry["model"] = model_name
+            if api_key and not str(entry.get("api_key", "") or "").strip():
+                entry["api_key"] = api_key
+            if key_env and not str(entry.get("key_env", "") or "").strip():
+                entry["key_env"] = key_env
+            updated = True
+            break
+    if updated:
+        cfg["custom_providers"] = custom_providers_cfg
+        save_config(cfg)
+    elif provider_key:
         providers_cfg = cfg.get("providers")
         if isinstance(providers_cfg, dict):
             provider_entry = providers_cfg.get(provider_key)
