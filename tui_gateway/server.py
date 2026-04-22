@@ -1,6 +1,7 @@
 import atexit
 import concurrent.futures
 import copy
+import io
 import json
 import os
 import queue
@@ -9,8 +10,10 @@ import sys
 import threading
 import time
 import uuid
+from contextlib import redirect_stdout
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 from hermes_constants import get_hermes_home
 from hermes_cli.env_loader import load_hermes_dotenv
@@ -466,7 +469,7 @@ def _restart_slash_worker(session: dict):
         session["slash_worker"] = None
 
 
-def _persist_model_switch(result) -> None:
+def _persist_model_switch(result, provider_override: str = "") -> None:
     from hermes_cli.config import save_config
 
     cfg = _load_cfg()
@@ -476,9 +479,16 @@ def _persist_model_switch(result) -> None:
         cfg["model"] = model_cfg
 
     model_cfg["default"] = result.new_model
-    model_cfg["provider"] = result.target_provider
-    if result.base_url:
+    persisted_provider = provider_override or result.target_provider
+    model_cfg["provider"] = persisted_provider
+    if persisted_provider.startswith("custom:"):
+        model_cfg.pop("base_url", None)
+        model_cfg.pop("api_key", None)
+        model_cfg.pop("api_mode", None)
+    elif result.base_url:
         model_cfg["base_url"] = result.base_url
+        if result.api_mode:
+            model_cfg["api_mode"] = result.api_mode
     else:
         model_cfg.pop("base_url", None)
     save_config(cfg)
@@ -513,6 +523,8 @@ def _apply_model_switch(sid: str, session: dict, raw_input: str) -> dict:
         current_api_key=current_api_key,
         is_global=persist_global,
         explicit_provider=explicit_provider,
+        user_providers=cfg.get("providers") if isinstance(cfg.get("providers"), dict) else {},
+        custom_providers=cfg.get("custom_providers") if isinstance(cfg.get("custom_providers"), list) else [],
     )
     if not result.success:
         raise ValueError(result.error_message or "model switch failed")
@@ -530,7 +542,10 @@ def _apply_model_switch(sid: str, session: dict, raw_input: str) -> dict:
 
     os.environ["HERMES_MODEL"] = result.new_model
     if persist_global:
-        _persist_model_switch(result)
+        _persist_model_switch(
+            result,
+            provider_override=explicit_provider if explicit_provider.startswith("custom:") else "",
+        )
     return {"value": result.new_model, "warning": result.warning_message or ""}
 
 
@@ -2050,6 +2065,172 @@ def _(rid, params: dict) -> dict:
         return _ok(rid, {"provider_configured": bool(_has_any_provider_configured())})
     except Exception as e:
         return _err(rid, 5016, str(e))
+
+
+def _run_auth_command(fn, **kwargs) -> str:
+    buf = io.StringIO()
+    try:
+        with redirect_stdout(buf):
+            fn(SimpleNamespace(**kwargs))
+    except SystemExit as exc:
+        msg = str(exc).strip() or buf.getvalue().strip() or "auth command failed"
+        raise RuntimeError(msg) from exc
+    return buf.getvalue().strip()
+
+
+@method("auth.status")
+def _(rid, params: dict) -> dict:
+    try:
+        from agent.credential_pool import get_pool_strategy, list_custom_pool_providers, load_pool
+        from hermes_cli.auth import PROVIDER_REGISTRY
+        from hermes_cli.auth_commands import (
+            _OAUTH_CAPABLE_PROVIDERS,
+            _format_exhausted_status,
+            _get_custom_provider_names,
+        )
+
+        custom_names = {pool_key: display_name for display_name, pool_key, _provider_key in _get_custom_provider_names()}
+        managed = []
+        for provider_id, pconfig in PROVIDER_REGISTRY.items():
+            if pconfig.auth_type not in {"api_key", "oauth_device_code", "oauth_external"}:
+                continue
+            managed.append((provider_id, pconfig.name))
+        managed.append(("openrouter", "OpenRouter"))
+        for provider_id in sorted(list_custom_pool_providers()):
+            managed.append((provider_id, custom_names.get(provider_id, provider_id)))
+
+        providers = []
+        for provider_id, provider_name in managed:
+            pool = load_pool(provider_id)
+            entries = pool.entries()
+            current = pool.peek()
+            providers.append(
+                {
+                    "current_label": current.label if current is not None else "",
+                    "entries": [
+                        {
+                            "auth_type": entry.auth_type,
+                            "id": entry.id,
+                            "is_current": bool(current is not None and entry.id == current.id),
+                            "label": entry.label,
+                            "source": entry.source,
+                            "status": _format_exhausted_status(entry).strip() or "ready",
+                        }
+                        for entry in entries
+                    ],
+                    "entry_count": len(entries),
+                    "name": provider_name,
+                    "oauth_capable": provider_id in _OAUTH_CAPABLE_PROVIDERS,
+                    "slug": provider_id,
+                    "strategy": get_pool_strategy(provider_id),
+                }
+            )
+
+        providers.sort(key=lambda item: (-(item.get("entry_count") or 0), str(item["name"]).lower()))
+        return _ok(rid, {"providers": providers})
+    except Exception as e:
+        return _err(rid, 5034, str(e))
+
+
+@method("auth.select")
+def _(rid, params: dict) -> dict:
+    try:
+        from hermes_cli.auth_commands import auth_select_command
+
+        output = _run_auth_command(
+            auth_select_command,
+            provider=str(params.get("provider", "") or ""),
+            target=str(params.get("target", "") or ""),
+        )
+        return _ok(rid, {"output": output})
+    except Exception as e:
+        return _err(rid, 5035, str(e))
+
+
+@method("auth.remove")
+def _(rid, params: dict) -> dict:
+    try:
+        from hermes_cli.auth_commands import auth_remove_command
+
+        output = _run_auth_command(
+            auth_remove_command,
+            provider=str(params.get("provider", "") or ""),
+            target=str(params.get("target", "") or ""),
+        )
+        return _ok(rid, {"output": output})
+    except Exception as e:
+        return _err(rid, 5036, str(e))
+
+
+@method("auth.reset")
+def _(rid, params: dict) -> dict:
+    try:
+        from hermes_cli.auth_commands import auth_reset_command
+
+        output = _run_auth_command(auth_reset_command, provider=str(params.get("provider", "") or ""))
+        return _ok(rid, {"output": output})
+    except Exception as e:
+        return _err(rid, 5037, str(e))
+
+
+@method("auth.add_api_key")
+def _(rid, params: dict) -> dict:
+    try:
+        from hermes_cli.auth import PROVIDER_REGISTRY
+        from hermes_cli.auth_commands import auth_add_command
+
+        provider = str(params.get("provider", "") or "").strip()
+        if provider in PROVIDER_REGISTRY and PROVIDER_REGISTRY[provider].auth_type not in {
+            "api_key",
+            "oauth_device_code",
+            "oauth_external",
+        }:
+            return _err(rid, 4004, f"{provider} does not support API-key pool entries")
+
+        output = _run_auth_command(
+            auth_add_command,
+            provider=provider,
+            auth_type="api_key",
+            label=str(params.get("label", "") or ""),
+            api_key=str(params.get("api_key", "") or ""),
+            portal_url=None,
+            inference_url=None,
+            client_id=None,
+            scope=None,
+            no_browser=False,
+            timeout=None,
+            insecure=False,
+            ca_bundle=None,
+        )
+        return _ok(rid, {"output": output})
+    except Exception as e:
+        return _err(rid, 5038, str(e))
+
+
+@method("auth.strategy")
+def _(rid, params: dict) -> dict:
+    try:
+        from agent.credential_pool import SUPPORTED_POOL_STRATEGIES
+        from hermes_cli.config import load_config, save_config
+
+        provider = str(params.get("provider", "") or "").strip().lower()
+        strategy = str(params.get("strategy", "") or "").strip().lower()
+
+        if not provider:
+            return _err(rid, 4004, "provider is required")
+        if strategy not in SUPPORTED_POOL_STRATEGIES:
+            return _err(rid, 4004, f"unsupported strategy: {strategy}")
+
+        cfg = load_config()
+        pool_strategies = cfg.get("credential_pool_strategies") or {}
+        if not isinstance(pool_strategies, dict):
+            pool_strategies = {}
+        pool_strategies[provider] = strategy
+        cfg["credential_pool_strategies"] = pool_strategies
+        save_config(cfg)
+        return _ok(rid, {"provider": provider, "strategy": strategy})
+    except Exception as e:
+        return _err(rid, 5039, str(e))
 
 
 # ── Methods: tools & system ──────────────────────────────────────────
