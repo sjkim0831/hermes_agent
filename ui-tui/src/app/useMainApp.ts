@@ -466,7 +466,6 @@ export function useMainApp(gw: GatewayClient) {
     return () => {
       gw.off('event', handler)
       gw.off('exit', exitHandler)
-      gw.kill()
     }
   }, [gw, sys])
 
