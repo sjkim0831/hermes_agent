@@ -1446,6 +1446,7 @@ def select_provider_and_model(args=None):
                 "api_key": entry.get("api_key", ""),
                 "key_env": entry.get("key_env", ""),
                 "model": entry.get("model", ""),
+                "models": entry.get("models", {}),
                 "api_mode": entry.get("api_mode", ""),
                 "provider_key": provider_key,
             }

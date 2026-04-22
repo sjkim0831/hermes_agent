@@ -1895,6 +1895,10 @@ def _normalize_custom_provider_entry(
     models = entry.get("models")
     if isinstance(models, dict) and models:
         normalized["models"] = models
+    elif isinstance(models, list):
+        cleaned_models = [str(model).strip() for model in models if str(model).strip()]
+        if cleaned_models:
+            normalized["models"] = cleaned_models
 
     context_length = entry.get("context_length")
     if isinstance(context_length, int) and context_length > 0:
