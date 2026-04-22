@@ -178,6 +178,29 @@ def test_random_strategy_uses_random_choice(tmp_path, monkeypatch):
     assert selected.id == "cred-2"
 
 
+def test_api_key_provider_load_pool_includes_suffixed_env_vars(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    monkeypatch.setenv("CEREBRAS_API_KEY", "csk-primary")
+    monkeypatch.setenv("CEREBRAS_API_KEY_2", "csk-secondary")
+    monkeypatch.setenv("CEREBRAS_API_KEY_10", "csk-tenth")
+    _write_auth_store(tmp_path, {"version": 1, "credential_pool": {}})
+
+    from agent.credential_pool import load_pool
+
+    pool = load_pool("cerebras")
+    entries = pool.entries()
+
+    assert [entry.source for entry in entries] == [
+        "env:CEREBRAS_API_KEY",
+        "env:CEREBRAS_API_KEY_10",
+        "env:CEREBRAS_API_KEY_2",
+    ]
+    assert [entry.access_token for entry in entries] == [
+        "csk-primary",
+        "csk-tenth",
+        "csk-secondary",
+    ]
+
 
 def test_exhausted_entry_resets_after_ttl(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))

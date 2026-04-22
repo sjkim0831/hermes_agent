@@ -405,6 +405,18 @@ def auth_remove_command(args) -> None:
         print("Run `hermes auth add anthropic` to re-enable if needed.")
 
 
+def auth_select_command(args) -> None:
+    provider = _normalize_provider(getattr(args, "provider", ""))
+    target = getattr(args, "target", None)
+    pool = load_pool(provider)
+    if not pool.has_credentials():
+        raise SystemExit(f"No credentials for provider {provider}.")
+    selected, error = pool.select_target(target)
+    if selected is None:
+        raise SystemExit(f"{error} Provider: {provider}.")
+    print(f'Selected {provider} credential: "{selected.label}"')
+
+
 def auth_reset_command(args) -> None:
     provider = _normalize_provider(getattr(args, "provider", ""))
     pool = load_pool(provider)
@@ -445,6 +457,7 @@ def _interactive_auth() -> None:
     # Main menu
     choices = [
         "Add a credential",
+        "Select primary credential for a provider",
         "Remove a credential",
         "Reset cooldowns for a provider",
         "Set rotation strategy for a provider",
@@ -465,10 +478,12 @@ def _interactive_auth() -> None:
     if raw == "1":
         _interactive_add()
     elif raw == "2":
-        _interactive_remove()
+        _interactive_select()
     elif raw == "3":
-        _interactive_reset()
+        _interactive_remove()
     elif raw == "4":
+        _interactive_reset()
+    elif raw == "5":
         _interactive_strategy()
 
 
@@ -547,6 +562,29 @@ def _interactive_remove() -> None:
     auth_remove_command(SimpleNamespace(provider=provider, target=raw))
 
 
+def _interactive_select() -> None:
+    provider = _pick_provider("Provider to select credential for")
+    pool = load_pool(provider)
+    if not pool.has_credentials():
+        print(f"No credentials for {provider}.")
+        return
+
+    current = pool.peek()
+    for i, e in enumerate(pool.entries(), 1):
+        marker = " ← current" if current is not None and current.id == e.id else ""
+        exhausted = _format_exhausted_status(e)
+        print(f"  #{i}  {e.label:25s} {e.auth_type:10s} {e.source}{exhausted}{marker} [id:{e.id}]")
+
+    try:
+        raw = input("Select #, id, or label (blank to cancel): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return
+    if not raw:
+        return
+
+    auth_select_command(SimpleNamespace(provider=provider, target=raw))
+
+
 def _interactive_reset() -> None:
     provider = _pick_provider("Provider to reset cooldowns for")
 
@@ -605,6 +643,9 @@ def auth_command(args) -> None:
         return
     if action == "remove":
         auth_remove_command(args)
+        return
+    if action == "select":
+        auth_select_command(args)
         return
     if action == "reset":
         auth_reset_command(args)

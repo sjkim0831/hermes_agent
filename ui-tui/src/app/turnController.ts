@@ -1,4 +1,5 @@
 import { REASONING_PULSE_MS, STREAM_BATCH_MS } from '../config/timing.js'
+import { MAX_REASONING_CHARS, MAX_STREAM_SEGMENTS } from '../config/limits.js'
 import type { SessionInterruptResponse, SubagentEventPayload } from '../gatewayTypes.js'
 import { hasReasoningTag, splitReasoning } from '../lib/reasoning.js'
 import {
@@ -17,6 +18,19 @@ import { getUiState, patchUiState } from './uiStore.js'
 const INTERRUPT_COOLDOWN_MS = 1500
 const ACTIVITY_LIMIT = 8
 const TRAIL_LIMIT = 8
+const TRUNCATED_PREFIX = '...[truncated]\n'
+
+const capReasoning = (text: string) => {
+  if (text.length <= MAX_REASONING_CHARS) {
+    return text
+  }
+
+  const tailBudget = Math.max(0, MAX_REASONING_CHARS - TRUNCATED_PREFIX.length)
+
+  return `${TRUNCATED_PREFIX}${text.slice(-tailBudget)}`
+}
+
+const capSegments = (items: Msg[]) => items.slice(-MAX_STREAM_SEGMENTS)
 
 export interface InterruptDeps {
   appendMessage: (msg: Msg) => void
@@ -131,7 +145,7 @@ class TurnController {
     const split = hasReasoningTag(raw) ? splitReasoning(raw) : { reasoning: '', text: raw }
 
     if (split.reasoning && !this.reasoningText.trim()) {
-      this.reasoningText = split.reasoning
+      this.reasoningText = capReasoning(split.reasoning)
       patchTurnState({ reasoning: this.reasoningText, reasoningTokens: estimateTokensRough(this.reasoningText) })
     }
 
@@ -142,7 +156,10 @@ class TurnController {
     if (text) {
       const tools = this.pendingSegmentTools
 
-      this.segmentMessages = [...this.segmentMessages, { role: 'assistant', text, ...(tools.length && { tools }) }]
+      this.segmentMessages = capSegments([
+        ...this.segmentMessages,
+        { role: 'assistant', text, ...(tools.length && { tools }) }
+      ])
       this.pendingSegmentTools = []
     }
 
@@ -204,7 +221,7 @@ class TurnController {
     const rawText = (payload.rendered ?? payload.text ?? this.bufRef).trimStart()
     const split = splitReasoning(rawText)
     const finalText = split.text
-    const existingReasoning = this.reasoningText.trim() || String(payload.reasoning ?? '').trim()
+    const existingReasoning = capReasoning(this.reasoningText.trim() || String(payload.reasoning ?? '').trim())
     const savedReasoning = [existingReasoning, existingReasoning ? '' : split.reasoning].filter(Boolean).join('\n\n')
     const savedReasoningTokens = savedReasoning ? estimateTokensRough(savedReasoning) : 0
     const savedToolTokens = this.toolTokenAcc
@@ -260,7 +277,7 @@ class TurnController {
       return
     }
 
-    this.reasoningText = incoming
+    this.reasoningText = capReasoning(incoming)
     this.scheduleReasoning()
     this.pulseReasoningStreaming()
   }
@@ -270,7 +287,7 @@ class TurnController {
       return
     }
 
-    this.reasoningText += text
+    this.reasoningText = capReasoning(this.reasoningText + text)
     this.scheduleReasoning()
     this.pulseReasoningStreaming()
   }

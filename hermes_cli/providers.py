@@ -195,6 +195,9 @@ ALIASES: Dict[str, str] = {
     "x-ai": "xai",
     "x.ai": "xai",
     "grok": "xai",
+    "groq-cloud": "groq",
+    "fireworks-ai": "fireworks",
+    "cerebras-ai": "cerebras",
 
     # nvidia
     "nim": "nvidia",

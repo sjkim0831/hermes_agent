@@ -68,6 +68,21 @@ hermes --tui
 
 The directory must contain `dist/entry.js` and an up-to-date `node_modules`.
 
+### Node memory limit
+
+Hermes sets a larger default V8 heap for the TUI because long sessions or
+large repos can otherwise crash with `JavaScript heap out of memory`.
+
+To override the default, set:
+
+```bash
+export HERMES_TUI_HEAP_MB=12288
+hermes --tui
+```
+
+If you already manage `NODE_OPTIONS` yourself, Hermes leaves an existing
+`--max-old-space-size=...` value untouched.
+
 ## Keybindings
 
 Keybindings match the [Classic CLI](cli.md#keybindings) exactly. The only behavioral differences:

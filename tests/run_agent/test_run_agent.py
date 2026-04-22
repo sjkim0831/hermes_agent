@@ -1049,6 +1049,18 @@ class TestBuildApiKwargs:
         kwargs = agent._build_api_kwargs(messages)
         assert kwargs["max_tokens"] == 65536
 
+    def test_cerebras_default_sampling_and_max_tokens(self, agent):
+        agent.base_url = "https://api.cerebras.ai/v1"
+        agent._base_url_lower = agent.base_url.lower()
+        agent.max_tokens = None
+        messages = [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}]
+
+        kwargs = agent._build_api_kwargs(messages)
+
+        assert kwargs["temperature"] == 0.7
+        assert kwargs["top_p"] == 0.8
+        assert kwargs["max_tokens"] == 4096
+
     def test_ollama_think_false_on_effort_none(self, agent):
         """Custom (Ollama) provider with effort=none should inject think=false."""
         agent.provider = "custom"

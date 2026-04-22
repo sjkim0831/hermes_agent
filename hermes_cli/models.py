@@ -139,6 +139,15 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
     ],
+    "groq": [
+        "openai/gpt-oss-120b",
+    ],
+    "fireworks": [
+        "fireworks/minimax-m2p5",
+    ],
+    "cerebras": [
+        "qwen-3-235b-a22b-instruct-2507",
+    ],
     "zai": [
         "glm-5.1",
         "glm-5",
@@ -554,6 +563,9 @@ CANONICAL_PROVIDERS: list[ProviderEntry] = [
     ProviderEntry("huggingface",    "Hugging Face",             "Hugging Face Inference Providers (20+ open models)"),
     ProviderEntry("gemini",         "Google AI Studio",         "Google AI Studio (Gemini models — native Gemini API)"),
     ProviderEntry("google-gemini-cli", "Google Gemini (OAuth)",   "Google Gemini via OAuth + Code Assist (free tier supported; no API key needed)"),
+    ProviderEntry("groq",           "Groq",                     "Groq (ultra-fast OpenAI-compatible inference)"),
+    ProviderEntry("fireworks",      "Fireworks AI",             "Fireworks AI (open model hosting — OpenAI-compatible)"),
+    ProviderEntry("cerebras",       "Cerebras",                 "Cerebras (wafer-scale inference — OpenAI-compatible)"),
     ProviderEntry("deepseek",       "DeepSeek",                 "DeepSeek (DeepSeek-V3, R1, coder — direct API)"),
     ProviderEntry("xai",            "xAI",                      "xAI (Grok models — direct API)"),
     ProviderEntry("zai",            "Z.AI / GLM",               "Z.AI / GLM (Zhipu AI direct API)"),
@@ -590,6 +602,9 @@ _PROVIDER_ALIASES = {
     "google": "gemini",
     "google-gemini": "gemini",
     "google-ai-studio": "gemini",
+    "groq-cloud": "groq",
+    "fireworks-ai": "fireworks",
+    "cerebras-ai": "cerebras",
     "kimi": "kimi-coding",
     "moonshot": "kimi-coding",
     "kimi-cn": "kimi-coding-cn",
