@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import json
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from typing import Any, Dict, List, TypedDict
 
@@ -43,6 +44,29 @@ class StageTask:
     shard_index: int
     shard_count: int
     instruction: str
+    title: str = ""
+    ownership: str = ""
+
+
+def _extract_json_array(text: str) -> List[Dict[str, Any]]:
+    raw = str(text or "").strip()
+    if not raw:
+        return []
+    fence = raw.find("```json")
+    if fence >= 0:
+        raw = raw[fence + 7:]
+        end = raw.find("```")
+        if end >= 0:
+            raw = raw[:end]
+    start = raw.find("[")
+    end = raw.rfind("]")
+    if start < 0 or end < 0 or end <= start:
+        return []
+    try:
+        payload = json.loads(raw[start : end + 1])
+    except Exception:
+        return []
+    return [item for item in payload if isinstance(item, dict)]
 
 
 def _summarize_results(results: List[RuntimeResult]) -> List[str]:
@@ -120,9 +144,92 @@ def _decompose_stage_tasks(state: OrchestratorState, role: str, workers: int) ->
                 shard_index=index + 1,
                 shard_count=workers,
                 instruction=f"{hint}\nOriginal task: {task}",
+                title=f"{role}-{index + 1}",
+                ownership=f"{role} shard {index + 1}/{workers}",
             )
         )
     return tasks
+
+
+def _plan_stage_tasks_with_header(
+    state: OrchestratorState,
+    role: str,
+    desired_count: int,
+) -> List[StageTask]:
+    fallback = _decompose_stage_tasks(state, role, desired_count)
+    prompt = (
+        "You are the stage-header planner in a LangGraph orchestration.\n"
+        "Your job is to split the work into unique, tiny, non-overlapping tasks for parallel workers.\n"
+        "Do not duplicate work between workers. Do not leave ownership ambiguous.\n"
+        "Return ONLY a JSON array.\n"
+        "Each item must contain: title, ownership, instruction.\n"
+        f"Role: {role}\n"
+        f"Task type: {state.get('task_type')}\n"
+        f"Desired worker count: {desired_count}\n"
+        f"Supervisor plan:\n{state.get('plan') or '(none)'}\n\n"
+        f"Original user task:\n{state.get('task')}\n\n"
+        "Rules:\n"
+        "- Make each worker task as small as possible.\n"
+        "- Avoid collisions: each task must own a distinct file area, route area, or verification slice.\n"
+        "- If the task is about search, split by search target families.\n"
+        "- If the task is about implementation, split by artifact or layout region.\n"
+        "- Produce exactly the requested number of items when possible."
+    )
+
+    planner_runtimes = build_family_runtimes(list_provider_slots("gemini"), "gemini")
+    if not planner_runtimes:
+        planner_runtimes = build_family_runtimes(list_provider_slots("cerebras"), "cerebras")
+    result: RuntimeResult | None = None
+    for runtime in planner_runtimes:
+        result = runtime.run_fast_prompt(
+            prompt,
+            model=pick_default_model(runtime.slot),
+            timeout_seconds=60.0,
+        )
+        if result.ok:
+            break
+    if result is None or not result.ok:
+        return fallback
+
+    rows = _extract_json_array(result.text)
+    if not rows:
+        return fallback
+
+    tasks: List[StageTask] = []
+    seen: set[str] = set()
+    for index, row in enumerate(rows[:desired_count], start=1):
+        title = str(row.get("title") or f"{role}-{index}").strip()
+        ownership = str(row.get("ownership") or f"{role} shard {index}/{desired_count}").strip()
+        instruction = str(row.get("instruction") or "").strip()
+        fingerprint = f"{title}|{ownership}|{instruction}".strip().lower()
+        if not instruction or fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        tasks.append(
+            StageTask(
+                role=role,
+                shard_index=index,
+                shard_count=desired_count,
+                instruction=instruction,
+                title=title,
+                ownership=ownership,
+            )
+        )
+    if not tasks:
+        return fallback
+    while len(tasks) < desired_count:
+        next_index = len(tasks) + 1
+        tasks.append(
+            StageTask(
+                role=role,
+                shard_index=next_index,
+                shard_count=desired_count,
+                instruction=fallback[(next_index - 1) % len(fallback)].instruction,
+                title=fallback[(next_index - 1) % len(fallback)].title,
+                ownership=fallback[(next_index - 1) % len(fallback)].ownership,
+            )
+        )
+    return tasks[:desired_count]
 
 
 def _preferred_model_for_role(role: str, runtime: CodexWorkerRuntime, state: OrchestratorState) -> str:
@@ -162,16 +269,31 @@ def _boost_search_workers(role: str, task_type: str, difficulty: int, workers: i
     return workers
 
 
+def _max_available_stage_workers(provider_family: str) -> int:
+    return max(1, min(20, len(list_provider_slots(provider_family))))
+
+
+def _maximize_stage_workers(role: str, workers: int) -> int:
+    provider_family = "cerebras"
+    if role == "supervisor":
+        provider_family = "gemini"
+    return max(workers, _max_available_stage_workers(provider_family))
+
+
+def _planned_task_count(dispatch_workers: int) -> int:
+    return max(dispatch_workers, min(60, dispatch_workers * 2))
+
+
 def _dispatch_worker_count(role: str, task_type: str, difficulty: int, workers: int) -> int:
     if task_type == "general":
         return min(workers, 2 if difficulty <= 1 else 4)
     if role in {"finder", "reader", "summarizer"}:
-        return min(workers, max(4, min(8, difficulty * 2 + 2)))
+        return workers
     if role == "implementer":
-        return min(workers, max(2, min(4, difficulty + 1)))
+        return workers
     if role == "verifier":
-        return min(workers, max(1, min(3, difficulty + 1)))
-    return min(workers, 4)
+        return workers
+    return workers
 
 
 def _is_fast_path(task_type: str, difficulty: int, estimated_tokens: int) -> bool:
@@ -188,12 +310,20 @@ def _run_parallel_role(
     cwd = state.get("cwd") or None
     telemetry = TelemetryStore()
     dispatch_workers = _dispatch_worker_count(role, str(state.get("task_type") or "general"), int(state.get("difficulty") or 1), allocation.workers)
+    planned_tasks = _planned_task_count(dispatch_workers)
     stage_tasks = [
-        StageTask(role=role, shard_index=index + 1, shard_count=allocation.workers, instruction=item)
+        StageTask(
+            role=role,
+            shard_index=index + 1,
+            shard_count=planned_tasks,
+            instruction=item,
+            title=f"{role}-{index + 1}",
+            ownership=f"{role} shard {index + 1}/{planned_tasks}",
+        )
         for index, item in enumerate((state.get("stage_tasks") or {}).get(role, []))
-    ][:dispatch_workers]
+    ][:planned_tasks]
     if not stage_tasks:
-        stage_tasks = _decompose_stage_tasks(state, role, allocation.workers)[:dispatch_workers]
+        stage_tasks = _plan_stage_tasks_with_header(state, role, planned_tasks)
     prompt_base = (
         f"You are the {role} stage in a LangGraph Codex orchestration.\n"
         f"Task type: {state['task_type']}\n"
@@ -234,25 +364,17 @@ def _run_parallel_role(
             )
         ]
     with ThreadPoolExecutor(max_workers=max(1, dispatch_workers)) as executor:
+        pending_tasks = list(stage_tasks)
+        available_runtimes = list(runtimes)
         future_map = {}
-        for stage_task in stage_tasks:
-            ranked_runtimes = sorted(
-                runtimes,
-                key=lambda runtime: (
-                    runtime.slot.provider_family != "cerebras",
-                    runtime.slot.provider_id,
-                ),
-            )
-            runtime = min(
-                ranked_runtimes,
-                key=lambda item: telemetry.provider_penalty(
-                    item.slot.provider_id,
-                    _preferred_model_for_role(role, item, state),
-                ),
-            )
+        runtime_usage: Dict[str, int] = {}
+
+        def schedule_one(runtime: CodexWorkerRuntime, stage_task: StageTask) -> None:
             shard_prompt = (
                 prompt_base
                 + f"\n\nShard assignment: {stage_task.shard_index}/{stage_task.shard_count}"
+                + f"\nTask title: {stage_task.title}"
+                + f"\nOwnership boundary: {stage_task.ownership}"
                 + f"\nShard-specific objective:\n{stage_task.instruction}"
             )
             future = executor.submit(
@@ -262,24 +384,60 @@ def _run_parallel_role(
                 model=_preferred_model_for_role(role, runtime, state),
             )
             future_map[future] = (runtime, stage_task)
-        for future in as_completed(future_map):
-            runtime, stage_task = future_map[future]
-            result = future.result()
-            telemetry.record_worker_result(
-                task_type=str(state.get("task_type") or "general"),
-                role=role,
-                provider_family=runtime.slot.provider_family,
-                provider_id=result.provider_id or runtime.slot.provider_id,
-                model=result.model or _preferred_model_for_role(role, runtime, state),
-                credential_label=result.credential_label,
-                duration_seconds=result.duration_seconds,
-                success=result.ok,
-                rate_limited=result.rate_limited,
-                shard_index=stage_task.shard_index,
-                shard_task=stage_task.instruction,
-                error=result.error,
+            runtime_usage[runtime.slot.provider_id] = runtime_usage.get(runtime.slot.provider_id, 0) + 1
+
+        while pending_tasks and available_runtimes and len(future_map) < dispatch_workers:
+            runtime = min(
+                available_runtimes,
+                key=lambda item: (
+                    runtime_usage.get(item.slot.provider_id, 0),
+                    telemetry.provider_penalty(
+                        item.slot.provider_id,
+                        _preferred_model_for_role(role, item, state),
+                    ),
+                    item.slot.provider_id,
+                ),
             )
-            results.append(result)
+            available_runtimes.remove(runtime)
+            schedule_one(runtime, pending_tasks.pop(0))
+
+        while future_map:
+            done, _ = wait(set(future_map.keys()), return_when=FIRST_COMPLETED)
+            for future in done:
+                runtime, stage_task = future_map.pop(future)
+                result = future.result()
+                telemetry.record_worker_result(
+                    task_type=str(state.get("task_type") or "general"),
+                    role=role,
+                    provider_family=runtime.slot.provider_family,
+                    provider_id=result.provider_id or runtime.slot.provider_id,
+                    model=result.model or _preferred_model_for_role(role, runtime, state),
+                    credential_label=result.credential_label,
+                    duration_seconds=result.duration_seconds,
+                    success=result.ok,
+                    rate_limited=result.rate_limited,
+                    shard_index=stage_task.shard_index,
+                    shard_task=stage_task.instruction,
+                    error=result.error,
+                )
+                results.append(result)
+                if not result.budget_blocked and not result.rate_limited:
+                    available_runtimes.append(runtime)
+
+            while pending_tasks and available_runtimes and len(future_map) < dispatch_workers:
+                runtime = min(
+                    available_runtimes,
+                    key=lambda item: (
+                        runtime_usage.get(item.slot.provider_id, 0),
+                        telemetry.provider_penalty(
+                            item.slot.provider_id,
+                            _preferred_model_for_role(role, item, state),
+                        ),
+                        item.slot.provider_id,
+                    ),
+                )
+                available_runtimes.remove(runtime)
+                schedule_one(runtime, pending_tasks.pop(0))
     return results
 
 
@@ -323,6 +481,7 @@ def _classify(state: OrchestratorState) -> OrchestratorState:
             telemetry=telemetry,
         )[role]
         boosted_workers = _boost_search_workers(role, task_type, difficulty, role_alloc.workers)
+        boosted_workers = _maximize_stage_workers(role, boosted_workers)
         allocations[role] = StageAllocation(
             role=role,
             workers=boosted_workers,
@@ -331,7 +490,7 @@ def _classify(state: OrchestratorState) -> OrchestratorState:
             overload_ratio=role_alloc.overload_ratio,
         )
     stage_tasks = {
-        role: [task.instruction for task in _decompose_stage_tasks(state, role, allocations[role].workers)]
+        role: [task.instruction for task in _decompose_stage_tasks(state, role, _planned_task_count(allocations[role].workers))]
         for role in ROLE_NAMES
     }
     return {
