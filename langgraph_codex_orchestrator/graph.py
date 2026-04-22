@@ -48,6 +48,17 @@ def _summarize_results(results: List[RuntimeResult]) -> List[str]:
     return lines
 
 
+def _preferred_model_for_role(role: str, runtime: CodexWorkerRuntime, state: OrchestratorState) -> str:
+    task_type = str(state.get("task_type") or "general")
+    available = set(runtime.slot.models)
+    if role in {"implementer", "verifier"} and "qwen-3-235b-a22b-instruct-2507" in available:
+        return "qwen-3-235b-a22b-instruct-2507"
+    if role in {"finder", "reader", "summarizer"} and task_type in {"repo_search", "general"}:
+        if "llama3.1-8b" in available:
+            return "llama3.1-8b"
+    return pick_default_model(runtime.slot)
+
+
 def _run_parallel_role(
     role: str,
     state: OrchestratorState,
@@ -63,8 +74,25 @@ def _run_parallel_role(
         f"Estimated tokens: {state['estimated_tokens']}\n"
         f"Role-specific goal: produce concise, useful output for the '{role}' stage.\n"
         f"Avoid overlap with other workers by focusing on your shard number.\n\n"
+        "You are running through a Codex launcher and may use Codex tools normally.\n"
         f"Original task:\n{task}"
     )
+    if role == "implementer":
+        prompt_base += (
+            "\n\nImplementation requirements:\n"
+            "- Actually perform the requested change, not just describe it.\n"
+            "- If the task asks to create or modify a file, create or modify the real file.\n"
+            "- If the task mentions the Windows desktop, use the WSL path under /mnt/c/Users/<username>/Desktop/.\n"
+            "- Return a short final summary that names the changed file paths."
+        )
+    elif role == "verifier":
+        prompt_base += (
+            "\n\nVerification requirements:\n"
+            "- Check whether the requested files or edits now exist.\n"
+            "- Report concrete file paths and any remaining gap."
+        )
+    else:
+        prompt_base += "\n\nReturn concise findings only."
     results: List[RuntimeResult] = []
     if not runtimes:
         return [
@@ -83,7 +111,7 @@ def _run_parallel_role(
         for index in range(allocation.workers):
             runtime = runtimes[index % len(runtimes)]
             shard_prompt = prompt_base + f"\n\nShard assignment: {index + 1}/{allocation.workers}"
-            future = executor.submit(runtime.run_prompt, shard_prompt, cwd=cwd, model=pick_default_model(runtime.slot))
+            future = executor.submit(runtime.run_prompt, shard_prompt, cwd=cwd, model=_preferred_model_for_role(role, runtime, state))
             future_map[future] = runtime
         for future in as_completed(future_map):
             results.append(future.result())

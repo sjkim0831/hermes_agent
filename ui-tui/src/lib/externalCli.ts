@@ -3,6 +3,8 @@ import { spawn } from 'node:child_process'
 export interface LaunchResult {
   code: null | number
   error?: string
+  stderr?: string
+  stdout?: string
 }
 
 interface LaunchSpec {
@@ -62,4 +64,22 @@ export const launchHermesOrchestratorCommand = (args: string[]): Promise<LaunchR
 
     child.on('error', err => resolve({ code: null, error: err.message }))
     child.on('exit', code => resolve({ code }))
+  })
+
+export const launchHermesOrchestratorCaptured = (args: string[]): Promise<LaunchResult> =>
+  new Promise(resolve => {
+    const launch = resolveHermesOrchestratorLaunch(args)
+    const child = spawn(launch.file, launch.args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    let stdout = ''
+    let stderr = ''
+
+    child.stdout?.on('data', chunk => {
+      stdout += String(chunk)
+    })
+    child.stderr?.on('data', chunk => {
+      stderr += String(chunk)
+    })
+
+    child.on('error', err => resolve({ code: null, error: err.message, stderr, stdout }))
+    child.on('exit', code => resolve({ code, stderr, stdout }))
   })

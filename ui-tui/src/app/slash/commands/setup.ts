@@ -1,6 +1,6 @@
 import { withInkSuspended } from '@hermes/ink'
 
-import { launchHermesCommand, launchHermesOrchestratorCommand } from '../../../lib/externalCli.js'
+import { launchHermesCommand, launchHermesOrchestratorCaptured } from '../../../lib/externalCli.js'
 import type { LaunchResult } from '../../../lib/externalCli.js'
 import { patchOverlayState } from '../../overlayStore.js'
 import { runExternalSetup } from '../../setupHandoff.js'
@@ -38,7 +38,7 @@ export const setupCommands: SlashCommand[] = [
       let result: LaunchResult = { code: null }
 
       await withInkSuspended(async () => {
-        result = await launchHermesOrchestratorCommand([...(dryRun ? ['--dry-run'] : []), task])
+        result = await launchHermesOrchestratorCaptured([...(dryRun ? ['--dry-run'] : []), task])
       })
 
       if (result.error) {
@@ -48,12 +48,23 @@ export const setupCommands: SlashCommand[] = [
       }
 
       if (result.code !== 0) {
-        ctx.transcript.sys(`hermes-orchestrator exited with code ${result.code}`)
+        const detail = [result.stderr, result.stdout].filter(Boolean).join('\n').trim()
+        ctx.transcript.page(detail || `hermes-orchestrator exited with code ${result.code}`, 'Orchestrator Error')
 
         return
       }
 
-      ctx.transcript.sys('orchestrator run complete')
+      const output = [result.stdout, result.stderr].filter(Boolean).join('\n').trim()
+      if (output) {
+        const long = output.length > 180 || output.split('\n').filter(Boolean).length > 2
+        if (long) {
+          ctx.transcript.page(output, 'Orchestrator')
+        } else {
+          ctx.transcript.sys(output)
+        }
+      } else {
+        ctx.transcript.sys('orchestrator completed with no output')
+      }
     }
   },
   {
