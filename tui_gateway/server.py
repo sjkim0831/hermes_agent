@@ -569,7 +569,19 @@ def _planner_enabled_config(cfg: dict) -> dict:
     return planning if isinstance(planning, dict) else {}
 
 
+_PLANNER_BRIEF_PREFIX = "Planner brief for the execution model:"
+_PLANNER_ORIGINAL_REQUEST_PREFIX = "Original user request:\n"
+
+
+def _prompt_already_planned(prompt: str) -> bool:
+    text = str(prompt or "").lstrip()
+    return text.startswith(_PLANNER_BRIEF_PREFIX) and _PLANNER_ORIGINAL_REQUEST_PREFIX in text
+
+
 def _plan_executor_prompt(prompt: str, agent) -> str:
+    if _prompt_already_planned(prompt):
+        return prompt
+
     planning = _planner_enabled_config(_load_cfg())
     provider = str(planning.get("provider", "") or "").strip()
     base_url = str(planning.get("base_url", "") or "").strip()
@@ -624,9 +636,9 @@ def _plan_executor_prompt(prompt: str, agent) -> str:
         if not brief:
             return prompt
         return (
-            "Planner brief for the execution model:\n"
+            f"{_PLANNER_BRIEF_PREFIX}\n"
             f"{brief}\n\n"
-            "Original user request:\n"
+            f"{_PLANNER_ORIGINAL_REQUEST_PREFIX}"
             f"{prompt}"
         )
     except Exception as exc:

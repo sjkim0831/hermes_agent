@@ -402,6 +402,61 @@ def test_prompt_submit_expands_context_refs(monkeypatch):
     assert captured["prompt"] == "expanded prompt"
 
 
+def test_plan_executor_prompt_does_not_rewrap_planned_prompt():
+    planned = (
+        "Planner brief for the execution model:\n"
+        "GOAL\nSay hi\n\n"
+        "Original user request:\n"
+        "hi"
+    )
+
+    assert server._plan_executor_prompt(planned, types.SimpleNamespace()) == planned
+
+
+def test_prompt_submit_planner_failure_falls_back_to_original_prompt(monkeypatch):
+    captured = {}
+
+    class _Agent:
+        model = "executor/model"
+        provider = "custom:cerebras-api-101"
+        base_url = ""
+        api_key = ""
+
+        def run_conversation(self, prompt, conversation_history=None, stream_callback=None):
+            captured["prompt"] = prompt
+            return {"final_response": "ok", "messages": [{"role": "assistant", "content": "ok"}]}
+
+    class _ImmediateThread:
+        def __init__(self, target=None, daemon=None):
+            self._target = target
+
+        def start(self):
+            self._target()
+
+    fake_aux = types.ModuleType("agent.auxiliary_client")
+
+    def _raise_call_llm(**kwargs):
+        raise RuntimeError("429 current quota exceeded")
+
+    fake_aux.call_llm = _raise_call_llm
+
+    server._sessions["sid"] = _session(agent=_Agent())
+    monkeypatch.setattr(server.threading, "Thread", _ImmediateThread)
+    monkeypatch.setattr(server, "_emit", lambda *args, **kwargs: None)
+    monkeypatch.setattr(server, "make_stream_renderer", lambda cols: None)
+    monkeypatch.setattr(server, "render_message", lambda raw, cols: None)
+    monkeypatch.setattr(
+        server,
+        "_load_cfg",
+        lambda: {"auxiliary": {"planning": {"provider": "custom:gemini-api-101", "model": "gemini-2.5-flash"}}},
+    )
+    monkeypatch.setitem(sys.modules, "agent.auxiliary_client", fake_aux)
+
+    server.handle_request({"id": "1", "method": "prompt.submit", "params": {"session_id": "sid", "text": "하이"}})
+
+    assert captured["prompt"] == "하이"
+
+
 def test_image_attach_appends_local_image(monkeypatch):
     fake_cli = types.ModuleType("cli")
     fake_cli._IMAGE_EXTENSIONS = {".png"}
