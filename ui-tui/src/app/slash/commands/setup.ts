@@ -35,11 +35,7 @@ export const setupCommands: SlashCommand[] = [
 
       ctx.transcript.sys(`launching \`hermes-orchestrator ${dryRun ? '--dry-run ' : ''}${task}\`…`)
 
-      let result: LaunchResult = { code: null }
-
-      await withInkSuspended(async () => {
-        result = await launchHermesOrchestratorCaptured([...(dryRun ? ['--dry-run'] : []), task])
-      })
+      const result: LaunchResult = await launchHermesOrchestratorCaptured([...(dryRun ? ['--dry-run'] : []), task])
 
       if (result.error) {
         ctx.transcript.sys(`error launching hermes-orchestrator: ${result.error}`)
@@ -93,11 +89,7 @@ export const setupCommands: SlashCommand[] = [
 
       ctx.transcript.sys(`launching \`hermes-orchestrator ${launchArgs.join(' ')}\`…`)
 
-      let result: LaunchResult = { code: null }
-
-      await withInkSuspended(async () => {
-        result = await launchHermesOrchestratorCaptured(launchArgs)
-      })
+      const result: LaunchResult = await launchHermesOrchestratorCaptured(launchArgs)
 
       if (result.error) {
         ctx.transcript.sys(`error launching hermes-orchestrator: ${result.error}`)
