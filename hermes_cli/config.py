@@ -1911,6 +1911,38 @@ def _normalize_custom_provider_entry(
     return normalized
 
 
+def custom_provider_model_ids(entry: Optional[Dict[str, Any]]) -> List[str]:
+    """Return a stable de-duplicated list of model ids for a custom provider.
+
+    Accepts both legacy ``model`` plus ``models`` dict/list shapes and merges
+    them into a single ordered list. The singular ``model`` stays first so the
+    current/default model remains the primary menu hint.
+    """
+    if not isinstance(entry, dict):
+        return []
+
+    model_ids: List[str] = []
+
+    default_model = str(entry.get("model") or entry.get("default_model") or "").strip()
+    if default_model:
+        model_ids.append(default_model)
+
+    configured_models = entry.get("models")
+    if isinstance(configured_models, dict):
+        candidates = configured_models.keys()
+    elif isinstance(configured_models, list):
+        candidates = configured_models
+    else:
+        candidates = ()
+
+    for candidate in candidates:
+        model_name = str(candidate or "").strip()
+        if model_name and model_name not in model_ids:
+            model_ids.append(model_name)
+
+    return model_ids
+
+
 def providers_dict_to_custom_providers(providers_dict: Any) -> List[Dict[str, Any]]:
     """Normalize ``providers`` config entries into the legacy custom-provider shape."""
     if not isinstance(providers_dict, dict):

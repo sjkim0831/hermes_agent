@@ -25,6 +25,7 @@ import re
 from dataclasses import dataclass
 from typing import List, NamedTuple, Optional
 
+from hermes_cli.config import custom_provider_model_ids
 from hermes_cli.providers import (
     custom_provider_slug,
     determine_api_mode,
@@ -1147,26 +1148,9 @@ def list_authenticated_providers(
                     "api_url": api_url,
                     "models": [],
                 }
-            # The singular ``model:`` field only holds the currently
-            # active model. Hermes's own writer (main.py::_save_custom_provider)
-            # stores every configured model as a dict under ``models:``;
-            # downstream readers (agent/models_dev.py, gateway/run.py,
-            # run_agent.py, hermes_cli/config.py) already consume that dict.
-            # The /model picker previously ignored it, so multi-model
-            # custom providers appeared to have only the active model.
-            default_model = (entry.get("model") or "").strip()
-            if default_model and default_model not in groups[slug]["models"]:
-                groups[slug]["models"].append(default_model)
-
-            cfg_models = entry.get("models", {})
-            if isinstance(cfg_models, dict):
-                for m in cfg_models:
-                    if m and m not in groups[slug]["models"]:
-                        groups[slug]["models"].append(m)
-            elif isinstance(cfg_models, list):
-                for m in cfg_models:
-                    if m and m not in groups[slug]["models"]:
-                        groups[slug]["models"].append(m)
+            for model_id in custom_provider_model_ids(entry):
+                if model_id not in groups[slug]["models"]:
+                    groups[slug]["models"].append(model_id)
 
         for slug, grp in groups.items():
             if slug.lower() in seen_slugs:

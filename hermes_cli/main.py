@@ -1425,6 +1425,8 @@ def select_provider_and_model(args=None):
     all_providers = [(p.slug, p.tui_desc) for p in CANONICAL_PROVIDERS]
 
     def _named_custom_provider_map(cfg) -> dict[str, dict[str, str]]:
+        from hermes_cli.config import custom_provider_model_ids
+
         custom_provider_map = {}
         for entry in get_compatible_custom_providers(cfg):
             if not isinstance(entry, dict):
@@ -1446,7 +1448,7 @@ def select_provider_and_model(args=None):
                 "api_key": entry.get("api_key", ""),
                 "key_env": entry.get("key_env", ""),
                 "model": entry.get("model", ""),
-                "models": entry.get("models", {}),
+                "models": custom_provider_model_ids(entry),
                 "api_mode": entry.get("api_mode", ""),
                 "provider_key": provider_key,
             }
@@ -2728,21 +2730,10 @@ def _model_flow_named_custom(config, provider_info):
     api_key = provider_info.get("api_key", "")
     key_env = provider_info.get("key_env", "")
     saved_model = provider_info.get("model", "")
-    saved_models = []
-    raw_saved_models = provider_info.get("models", {})
-    if isinstance(raw_saved_models, dict):
-        for model_name in raw_saved_models:
-            model_name = str(model_name or "").strip()
-            if model_name and model_name not in saved_models:
-                saved_models.append(model_name)
-    elif isinstance(raw_saved_models, list):
-        for model_name in raw_saved_models:
-            model_name = str(model_name or "").strip()
-            if model_name and model_name not in saved_models:
-                saved_models.append(model_name)
+    from hermes_cli.config import custom_provider_model_ids
+
+    saved_models = custom_provider_model_ids(provider_info)
     saved_model = str(saved_model or "").strip()
-    if saved_model and saved_model not in saved_models:
-        saved_models.insert(0, saved_model)
     provider_key = (provider_info.get("provider_key") or "").strip()
     selected_custom_slug = "custom:" + name.lower().replace(" ", "-")
     if not api_key and key_env:
