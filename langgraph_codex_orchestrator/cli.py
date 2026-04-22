@@ -8,6 +8,7 @@ import os
 import sys
 
 from .graph import _classify, build_graph
+from .quota import QuotaStore
 from .telemetry import TelemetryStore
 
 
@@ -26,10 +27,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         payload = _classify({"task": task, "cwd": args.cwd})
         telemetry = TelemetryStore()
+        quota = QuotaStore()
         payload["log_paths"] = {
             "telemetry": str(telemetry.path),
             "events": str(telemetry.event_log_path),
+            "quota": str(quota.path),
         }
+        payload["quota_summary"] = quota.summary()
         if args.json:
             sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2))
             sys.stdout.write("\n")

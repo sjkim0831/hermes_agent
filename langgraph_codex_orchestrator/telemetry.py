@@ -77,6 +77,32 @@ class TelemetryStore:
         with self.event_log_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(row, ensure_ascii=True) + "\n")
 
+    def record_quota_event(
+        self,
+        *,
+        provider_family: str,
+        provider_id: str,
+        credential_label: str,
+        metric: str,
+        used: int,
+        limit: int,
+        allowed: bool,
+        reason: str = "",
+    ) -> None:
+        self.append_event(
+            {
+                "kind": "quota",
+                "provider_family": provider_family,
+                "provider_id": provider_id,
+                "credential_label": credential_label,
+                "metric": metric,
+                "used": int(used),
+                "limit": int(limit),
+                "allowed": bool(allowed),
+                "reason": reason[:300],
+            }
+        )
+
     def record_stage(
         self,
         *,
