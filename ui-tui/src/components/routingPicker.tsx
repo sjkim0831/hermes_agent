@@ -31,7 +31,8 @@ export function RoutingPicker({ gw, onClose, sessionId, t }: RoutingPickerProps)
   const [notice, setNotice] = useState('')
   const [roleIdx, setRoleIdx] = useState(0)
   const [providerIdx, setProviderIdx] = useState(0)
-  const [stage, setStage] = useState<'role' | 'provider'>('role')
+  const [modelIdx, setModelIdx] = useState(0)
+  const [stage, setStage] = useState<'role' | 'provider' | 'model'>('role')
 
   const roles: Role[] = ['executor', 'planner']
   const role = roles[roleIdx] ?? 'executor'
@@ -39,6 +40,7 @@ export function RoutingPicker({ gw, onClose, sessionId, t }: RoutingPickerProps)
   const plannerOptions: RoutingProviderOption[] = [{ name: 'Planner Off', slug: '', models: [] }, ...customProviders]
   const providerOptions: RoutingProviderOption[] = role === 'planner' ? plannerOptions : customProviders
   const provider = providerOptions[providerIdx]
+  const models = provider?.models ?? []
   const plannerEnabled = Boolean(routing.planner?.provider)
   const modeLabel = plannerEnabled ? 'Dual routing active' : 'Single-provider mode'
 
@@ -66,6 +68,7 @@ export function RoutingPicker({ gw, onClose, sessionId, t }: RoutingPickerProps)
         setRouting(routingConfig ?? {})
         const maxProviderIdx = role === 'planner' ? nextProviders.length : Math.max(0, nextProviders.length - 1)
         setProviderIdx(current => Math.min(current, maxProviderIdx))
+        setModelIdx(0)
         setLoading(false)
       })
       .catch((e: unknown) => {
@@ -113,7 +116,7 @@ export function RoutingPicker({ gw, onClose, sessionId, t }: RoutingPickerProps)
       return
     }
 
-    const selectedModel = provider.models?.[0] ?? ''
+    const selectedModel = models[modelIdx] ?? ''
 
     if (!selectedModel) {
       setErr('selected provider has no model')
@@ -138,11 +141,12 @@ export function RoutingPicker({ gw, onClose, sessionId, t }: RoutingPickerProps)
           setErr('invalid response: routing.set')
           return
         }
-        setRouting(result)
-        setNotice(`${role}: ${provider.name} · ${selectedModel}`)
-        if (role === 'executor') {
-          onClose()
-          return
+          setRouting(result)
+          setNotice(`${role}: ${provider.name} · ${selectedModel}`)
+          setModelIdx(0)
+          if (role === 'executor') {
+            onClose()
+            return
         }
         setStage('role')
       })
@@ -161,6 +165,11 @@ export function RoutingPicker({ gw, onClose, sessionId, t }: RoutingPickerProps)
     }
 
     if (key.escape) {
+      if (stage === 'model') {
+        setStage('provider')
+        setModelIdx(0)
+        return
+      }
       if (stage === 'provider') {
         setStage('role')
         return
@@ -180,17 +189,48 @@ export function RoutingPicker({ gw, onClose, sessionId, t }: RoutingPickerProps)
       }
       if (key.return) {
         setStage('provider')
+        setProviderIdx(0)
         return
       }
       return
     }
 
-    if (key.upArrow && providerIdx > 0) {
-      setProviderIdx(v => v - 1)
+    if (stage === 'provider') {
+      if (key.upArrow && providerIdx > 0) {
+        setProviderIdx(v => v - 1)
+        return
+      }
+      if (key.downArrow && providerIdx < providerOptions.length - 1) {
+        setProviderIdx(v => v + 1)
+        return
+      }
+      if (key.return) {
+        if (role === 'planner' && !provider?.slug) {
+          applySelection()
+          return
+        }
+        setStage('model')
+        setModelIdx(0)
+        return
+      }
+
+      const n = ch === '0' ? 10 : parseInt(ch, 10)
+      if (!Number.isNaN(n) && n >= 1 && n <= Math.min(10, providerOptions.length)) {
+        const off = pageOffset(providerOptions.length, providerIdx)
+        const row = providerOptions[off + n - 1]
+        if (row) {
+          setProviderIdx(off + n - 1)
+        }
+      }
       return
     }
-    if (key.downArrow && providerIdx < customProviders.length - 1) {
-      setProviderIdx(v => v + 1)
+
+    if (key.upArrow && modelIdx > 0) {
+      setModelIdx(v => v - 1)
+      return
+    }
+    if (key.downArrow && modelIdx < models.length - 1) {
+      setModelIdx(v => v + 1)
       return
     }
     if (key.return) {
@@ -199,11 +239,11 @@ export function RoutingPicker({ gw, onClose, sessionId, t }: RoutingPickerProps)
     }
 
     const n = ch === '0' ? 10 : parseInt(ch, 10)
-    if (!Number.isNaN(n) && n >= 1 && n <= Math.min(10, customProviders.length)) {
-      const off = pageOffset(customProviders.length, providerIdx)
-      const row = customProviders[off + n - 1]
+    if (!Number.isNaN(n) && n >= 1 && n <= Math.min(10, models.length)) {
+      const off = pageOffset(models.length, modelIdx)
+      const row = models[off + n - 1]
       if (row) {
-        setProviderIdx(off + n - 1)
+        setModelIdx(off + n - 1)
       }
     }
   })
@@ -263,34 +303,69 @@ export function RoutingPicker({ gw, onClose, sessionId, t }: RoutingPickerProps)
 
   const off = pageOffset(providerOptions.length, providerIdx)
 
+  if (stage === 'provider') {
+    return (
+      <Box flexDirection="column" width={92}>
+        <Text bold color={t.color.amber}>
+          Select {role === 'executor' ? 'Executor' : 'Planner'} Provider
+        </Text>
+        <Text color={plannerEnabled ? t.color.ok : t.color.dim}>mode: {modeLabel}</Text>
+        <Text color={t.color.dim}>
+          current {role}: {(role === 'executor' ? routing.executor?.provider : routing.planner?.provider) || '(unset)'}
+        </Text>
+        {err ? <Text color={t.color.label}>error: {err}</Text> : null}
+        {notice ? <Text color={t.color.ok}>{notice}</Text> : null}
+        {off > 0 ? <Text color={t.color.dim}> ↑ {off} more</Text> : null}
+
+        {providerOptions.slice(off, off + VISIBLE).map((item, i) => {
+          const idx = off + i
+          const active = idx === providerIdx
+          const modelSummary = item.slug ? `${item.models?.length ?? 0} models` : 'disable planner pre-routing'
+
+          return (
+            <Text color={active ? t.color.cornsilk : t.color.dim} key={`${item.slug}:${modelSummary}`}>
+              {active ? '▸ ' : '  '}
+              {i + 1}. {item.name} · {modelSummary}
+            </Text>
+          )
+        })}
+
+        {off + VISIBLE < providerOptions.length ? (
+          <Text color={t.color.dim}> ↓ {providerOptions.length - off - VISIBLE} more</Text>
+        ) : null}
+        <Text color={t.color.dim}>Enter choose model · 1-9,0 quick · Esc back</Text>
+      </Box>
+    )
+  }
+
+  const modelOff = pageOffset(models.length, modelIdx)
+
   return (
     <Box flexDirection="column" width={92}>
       <Text bold color={t.color.amber}>
-        Select {role === 'executor' ? 'Executor' : 'Planner'} Provider
+        Select {role === 'executor' ? 'Executor' : 'Planner'} Model
       </Text>
       <Text color={plannerEnabled ? t.color.ok : t.color.dim}>mode: {modeLabel}</Text>
-      <Text color={t.color.dim}>
-        current {role}: {(role === 'executor' ? routing.executor?.provider : routing.planner?.provider) || '(unset)'}
-      </Text>
+      <Text color={t.color.dim}>{provider?.name || '(unset provider)'}</Text>
       {err ? <Text color={t.color.label}>error: {err}</Text> : null}
       {notice ? <Text color={t.color.ok}>{notice}</Text> : null}
-      {off > 0 ? <Text color={t.color.dim}> ↑ {off} more</Text> : null}
+      {!models.length ? <Text color={t.color.dim}>no models listed for this provider</Text> : null}
+      {modelOff > 0 ? <Text color={t.color.dim}> ↑ {modelOff} more</Text> : null}
 
-      {providerOptions.slice(off, off + VISIBLE).map((item, i) => {
-        const idx = off + i
-        const active = idx === providerIdx
-        const model = item.slug ? item.models?.[0] ?? '(no model)' : 'disable planner pre-routing'
+      {models.slice(modelOff, modelOff + VISIBLE).map((item, i) => {
+        const idx = modelOff + i
+        const active = idx === modelIdx
 
         return (
-          <Text color={active ? t.color.cornsilk : t.color.dim} key={`${item.slug}:${model}`}>
+          <Text color={modelIdx === idx ? t.color.cornsilk : t.color.dim} key={`${provider?.slug ?? 'prov'}:${item}`}>
             {active ? '▸ ' : '  '}
-            {i + 1}. {item.name} · {model}
+            {i + 1}. {item}
           </Text>
         )
       })}
 
-      {off + VISIBLE < providerOptions.length ? (
-        <Text color={t.color.dim}> ↓ {providerOptions.length - off - VISIBLE} more</Text>
+      {modelOff + VISIBLE < models.length ? (
+        <Text color={t.color.dim}> ↓ {models.length - modelOff - VISIBLE} more</Text>
       ) : null}
       <Text color={t.color.dim}>Enter apply · 1-9,0 quick · Esc back</Text>
     </Box>
