@@ -60,7 +60,10 @@ export const resolveHermesOrchestratorLaunch = (args: string[]): LaunchSpec =>
 export const launchHermesOrchestratorCommand = (args: string[]): Promise<LaunchResult> =>
   new Promise(resolve => {
     const launch = resolveHermesOrchestratorLaunch(args)
-    const child = spawn(launch.file, launch.args, { stdio: 'inherit' })
+    const child = spawn(launch.file, launch.args, {
+      stdio: 'inherit',
+      env: { ...process.env, HERMES_ORCHESTRATOR_PROGRESS: '1' }
+    })
 
     child.on('error', err => resolve({ code: null, error: err.message }))
     child.on('exit', code => resolve({ code }))

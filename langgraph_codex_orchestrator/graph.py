@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from typing import Any, Dict, List, TypedDict
@@ -46,6 +48,13 @@ class StageTask:
     instruction: str
     title: str = ""
     ownership: str = ""
+
+
+def _progress(message: str) -> None:
+    if os.environ.get("HERMES_ORCHESTRATOR_PROGRESS", "0") != "1":
+        return
+    sys.stderr.write(f"[orchestrator] {message}\n")
+    sys.stderr.flush()
 
 
 def _extract_json_array(text: str) -> List[Dict[str, Any]]:
@@ -151,12 +160,37 @@ def _decompose_stage_tasks(state: OrchestratorState, role: str, workers: int) ->
     return tasks
 
 
+def _header_plan_task_count(desired_count: int) -> int:
+    return max(8, min(24, desired_count))
+
+
+def _expand_seed_tasks(role: str, desired_count: int, seeds: List[StageTask]) -> List[StageTask]:
+    if not seeds:
+        return []
+    expanded: List[StageTask] = []
+    for index in range(desired_count):
+        seed = seeds[index % len(seeds)]
+        partition = (index // len(seeds)) + 1
+        expanded.append(
+            StageTask(
+                role=role,
+                shard_index=index + 1,
+                shard_count=desired_count,
+                instruction=f"{seed.instruction}\nAdditional partition: slice {partition}.",
+                title=f"{seed.title}-p{partition}",
+                ownership=f"{seed.ownership} / partition {partition}",
+            )
+        )
+    return expanded
+
+
 def _plan_stage_tasks_with_header(
     state: OrchestratorState,
     role: str,
     desired_count: int,
 ) -> List[StageTask]:
-    fallback = _decompose_stage_tasks(state, role, desired_count)
+    planner_count = _header_plan_task_count(desired_count)
+    fallback = _decompose_stage_tasks(state, role, planner_count)
     prompt = (
         "You are the stage-header planner in a LangGraph orchestration.\n"
         "Your job is to split the work into unique, tiny, non-overlapping tasks for parallel workers.\n"
@@ -166,6 +200,7 @@ def _plan_stage_tasks_with_header(
         f"Role: {role}\n"
         f"Task type: {state.get('task_type')}\n"
         f"Desired worker count: {desired_count}\n"
+        f"Seed task count to return: {planner_count}\n"
         f"Supervisor plan:\n{state.get('plan') or '(none)'}\n\n"
         f"Original user task:\n{state.get('task')}\n\n"
         "Rules:\n"
@@ -173,7 +208,8 @@ def _plan_stage_tasks_with_header(
         "- Avoid collisions: each task must own a distinct file area, route area, or verification slice.\n"
         "- If the task is about search, split by search target families.\n"
         "- If the task is about implementation, split by artifact or layout region.\n"
-        "- Produce exactly the requested number of items when possible."
+        f"- Produce exactly {planner_count} items.\n"
+        "- Make each item reusable as a seed for additional ordered partitions."
     )
 
     planner_runtimes = build_family_runtimes(list_provider_slots("gemini"), "gemini")
@@ -197,7 +233,7 @@ def _plan_stage_tasks_with_header(
 
     tasks: List[StageTask] = []
     seen: set[str] = set()
-    for index, row in enumerate(rows[:desired_count], start=1):
+    for index, row in enumerate(rows[:planner_count], start=1):
         title = str(row.get("title") or f"{role}-{index}").strip()
         ownership = str(row.get("ownership") or f"{role} shard {index}/{desired_count}").strip()
         instruction = str(row.get("instruction") or "").strip()
@@ -209,27 +245,27 @@ def _plan_stage_tasks_with_header(
             StageTask(
                 role=role,
                 shard_index=index,
-                shard_count=desired_count,
+                shard_count=planner_count,
                 instruction=instruction,
                 title=title,
                 ownership=ownership,
             )
         )
     if not tasks:
-        return fallback
-    while len(tasks) < desired_count:
+        return _expand_seed_tasks(role, desired_count, fallback)
+    while len(tasks) < planner_count:
         next_index = len(tasks) + 1
         tasks.append(
             StageTask(
                 role=role,
                 shard_index=next_index,
-                shard_count=desired_count,
+                shard_count=planner_count,
                 instruction=fallback[(next_index - 1) % len(fallback)].instruction,
                 title=fallback[(next_index - 1) % len(fallback)].title,
                 ownership=fallback[(next_index - 1) % len(fallback)].ownership,
             )
         )
-    return tasks[:desired_count]
+    return _expand_seed_tasks(role, desired_count, tasks[:planner_count])
 
 
 def _preferred_model_for_role(role: str, runtime: CodexWorkerRuntime, state: OrchestratorState) -> str:
@@ -418,6 +454,7 @@ def _run_parallel_role(
 
 
 def _fast_execute(state: OrchestratorState) -> OrchestratorState:
+    _progress("fast path execution")
     prompt = (
         "You are the fast-path execution backend for a trivial LangGraph orchestration.\n"
         "Answer the user's request directly and concisely.\n\n"
@@ -440,6 +477,7 @@ def _fast_execute(state: OrchestratorState) -> OrchestratorState:
 
 
 def _classify(state: OrchestratorState) -> OrchestratorState:
+    _progress("classifying task and building shard plan")
     telemetry = TelemetryStore()
     task = state["task"]
     task_type = classify_task_type(task)
@@ -485,6 +523,7 @@ def _classify(state: OrchestratorState) -> OrchestratorState:
 
 
 def _supervisor_plan(state: OrchestratorState) -> OrchestratorState:
+    _progress("running supervisor plan")
     gemini_runtimes = build_family_runtimes(list_provider_slots("gemini"), "gemini")
     cerebras_runtimes = build_family_runtimes(list_provider_slots("cerebras"), "cerebras")
     prompt = (
@@ -514,6 +553,7 @@ def _supervisor_plan(state: OrchestratorState) -> OrchestratorState:
 
 def _stage_node(role: str, provider_family: str):
     def _run(state: OrchestratorState) -> OrchestratorState:
+        _progress(f"starting stage: {role}")
         telemetry = TelemetryStore()
         allocations = state["allocations"]
         allocation = StageAllocation(**allocations[role])
@@ -536,16 +576,21 @@ def _stage_node(role: str, provider_family: str):
         current: List[str] = list(state.get(key, [])) if isinstance(state.get(key), list) else []
         additions = _summarize_results(results)
         if role == "implementer":
+            _progress("completed stage: implementer")
             return {**state, "implementation": "\n\n".join(additions)}
         if role == "verifier":
+            _progress("completed stage: verifier")
             return {**state, "verification": "\n\n".join(additions), "telemetry_summary": telemetry.summarize()}
         if role == "summarizer":
+            _progress("completed stage: summarizer")
             return {**state, "summaries": additions}
+        _progress(f"completed stage: {role}")
         return {**state, key: current + additions}
     return _run
 
 
 def _finalize(state: OrchestratorState) -> OrchestratorState:
+    _progress("finalizing response")
     sections = [
         "Supervisor plan:\n" + str(state.get("plan") or "").strip(),
         "Finder/Reader results:\n" + "\n\n".join(state.get("findings") or []),
