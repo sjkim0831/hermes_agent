@@ -457,6 +457,42 @@ def test_prompt_submit_planner_failure_falls_back_to_original_prompt(monkeypatch
     assert captured["prompt"] == "하이"
 
 
+def test_plan_executor_prompt_resolves_named_custom_provider_credentials(monkeypatch):
+    fake_aux = types.ModuleType("agent.auxiliary_client")
+    calls = {}
+
+    def _fake_call_llm(**kwargs):
+        calls.update(kwargs)
+        return types.SimpleNamespace(
+            choices=[types.SimpleNamespace(message=types.SimpleNamespace(content="GOAL\nSay hi"))]
+        )
+
+    fake_aux.call_llm = _fake_call_llm
+    monkeypatch.setitem(sys.modules, "agent.auxiliary_client", fake_aux)
+    monkeypatch.setenv("GEMINI_API_KEY_101", "gem-key")
+    monkeypatch.setattr(
+        server,
+        "_load_cfg",
+        lambda: {"auxiliary": {"planning": {"provider": "custom:gemini-api-101", "model": "gemini-2.5-flash"}}},
+    )
+
+    fake_runtime = types.ModuleType("hermes_cli.runtime_provider")
+    fake_runtime._get_named_custom_provider = lambda provider: {
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "key_env": "GEMINI_API_KEY_101",
+        "api_key": "",
+        "provider_key": "codex-gemini-cli",
+    }
+    monkeypatch.setitem(sys.modules, "hermes_cli.runtime_provider", fake_runtime)
+
+    planned = server._plan_executor_prompt("하이", types.SimpleNamespace(provider="custom:cerebras-api-101", model="qwen-3"))
+
+    assert calls["provider"] == "custom:gemini-api-101"
+    assert calls["base_url"] == "https://generativelanguage.googleapis.com/v1beta/openai"
+    assert calls["api_key"] == "gem-key"
+    assert "Planner brief for the execution model:" in planned
+
+
 def test_image_attach_appends_local_image(monkeypatch):
     fake_cli = types.ModuleType("cli")
     fake_cli._IMAGE_EXTENSIONS = {".png"}
@@ -1045,6 +1081,15 @@ def test_routing_set_planner_persists_auxiliary_planning(monkeypatch):
     writes = {}
 
     monkeypatch.setattr(server, "_write_config_key", lambda key, value: writes.__setitem__(key, value))
+    fake_runtime = types.ModuleType("hermes_cli.runtime_provider")
+    fake_runtime._get_named_custom_provider = lambda provider: {
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "api_key": "",
+        "key_env": "GEMINI_API_KEY_101",
+        "provider_key": "codex-gemini-cli",
+        "api_mode": "chat_completions",
+    }
+    monkeypatch.setitem(sys.modules, "hermes_cli.runtime_provider", fake_runtime)
     monkeypatch.setattr(
         server,
         "_routing_status_for_session",
@@ -1069,6 +1114,10 @@ def test_routing_set_planner_persists_auxiliary_planning(monkeypatch):
     assert resp["result"]["planner"]["provider"] == "custom:gemini-api-101"
     assert writes["auxiliary.planning.provider"] == "custom:gemini-api-101"
     assert writes["auxiliary.planning.model"] == "gemini-2.5-flash"
+    assert writes["auxiliary.planning.base_url"] == "https://generativelanguage.googleapis.com/v1beta/openai"
+    assert writes["auxiliary.planning.key_env"] == "GEMINI_API_KEY_101"
+    assert writes["auxiliary.planning.provider_key"] == "codex-gemini-cli"
+    assert writes["auxiliary.planning.api_mode"] == "chat_completions"
 
 
 def test_routing_set_planner_off_clears_auxiliary_planning(monkeypatch):
@@ -1101,6 +1150,9 @@ def test_routing_set_planner_off_clears_auxiliary_planning(monkeypatch):
     assert writes["auxiliary.planning.model"] == ""
     assert writes["auxiliary.planning.base_url"] == ""
     assert writes["auxiliary.planning.api_key"] == ""
+    assert writes["auxiliary.planning.key_env"] == ""
+    assert writes["auxiliary.planning.provider_key"] == ""
+    assert writes["auxiliary.planning.api_mode"] == ""
 
 
 def test_mirror_slash_side_effects_rejects_mutating_commands_while_running(monkeypatch):

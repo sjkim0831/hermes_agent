@@ -590,6 +590,26 @@ def _plan_executor_prompt(prompt: str, agent) -> str:
 
     model = str(planning.get("model", "") or "").strip() or None
     api_key = str(planning.get("api_key", "") or "").strip() or None
+    key_env = str(planning.get("key_env", "") or "").strip()
+    if not api_key and key_env:
+        api_key = os.getenv(key_env, "").strip() or None
+
+    if provider and (not base_url or not api_key):
+        try:
+            from hermes_cli.runtime_provider import _get_named_custom_provider
+
+            named = _get_named_custom_provider(provider)
+        except Exception:
+            named = None
+        if isinstance(named, dict):
+            if not base_url:
+                base_url = str(named.get("base_url", "") or "").strip()
+            if not api_key:
+                api_key = str(named.get("api_key", "") or "").strip() or None
+                if not api_key:
+                    named_key_env = str(named.get("key_env", "") or "").strip()
+                    if named_key_env:
+                        api_key = os.getenv(named_key_env, "").strip() or None
 
     planner_messages = [
         {
@@ -2268,11 +2288,27 @@ def _(rid, params: dict) -> dict:
         _write_config_key("auxiliary.planning.model", "")
         _write_config_key("auxiliary.planning.base_url", "")
         _write_config_key("auxiliary.planning.api_key", "")
+        _write_config_key("auxiliary.planning.key_env", "")
+        _write_config_key("auxiliary.planning.provider_key", "")
+        _write_config_key("auxiliary.planning.api_mode", "")
         session = _sessions.get(params.get("session_id", ""))
         return _ok(rid, _routing_status_for_session(session))
 
+    named = None
+    try:
+        from hermes_cli.runtime_provider import _get_named_custom_provider
+
+        named = _get_named_custom_provider(provider)
+    except Exception:
+        named = None
+
     _write_config_key("auxiliary.planning.provider", provider)
     _write_config_key("auxiliary.planning.model", model)
+    _write_config_key("auxiliary.planning.base_url", str((named or {}).get("base_url", "") or "").strip())
+    _write_config_key("auxiliary.planning.api_key", str((named or {}).get("api_key", "") or "").strip())
+    _write_config_key("auxiliary.planning.key_env", str((named or {}).get("key_env", "") or "").strip())
+    _write_config_key("auxiliary.planning.provider_key", str((named or {}).get("provider_key", "") or "").strip())
+    _write_config_key("auxiliary.planning.api_mode", str((named or {}).get("api_mode", "") or "").strip())
     session = _sessions.get(params.get("session_id", ""))
     return _ok(rid, _routing_status_for_session(session))
 
