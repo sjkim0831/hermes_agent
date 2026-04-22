@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional
@@ -21,6 +23,13 @@ RATE_LIMIT_MARKERS = ("429", "quota", "rate limit", "too many requests", "resour
 def _is_rate_limited(detail: str) -> bool:
     lowered = str(detail or "").lower()
     return any(marker in lowered for marker in RATE_LIMIT_MARKERS)
+
+
+def _progress(message: str) -> None:
+    if os.environ.get("HERMES_ORCHESTRATOR_PROGRESS", "0") != "1":
+        return
+    sys.stderr.write(f"[orchestrator] {message}\n")
+    sys.stderr.flush()
 
 
 @dataclass
@@ -123,6 +132,10 @@ class CodexWorkerRuntime:
         entry, _decision = picked
         started = time.time()
         try:
+            _progress(
+                f"api call: provider={self.slot.provider_id} credential={entry.label} "
+                f"model={model or self.slot.model} mode=fast prompt_tokens={prompt_tokens}"
+            )
             client = OpenAI(
                 api_key=entry.runtime_api_key,
                 base_url=self.slot.base_url,
@@ -233,6 +246,13 @@ class CodexWorkerRuntime:
                 if model or self.slot.model:
                     argv.extend(["-m", model or self.slot.model])
                 argv.append(prompt)
+                display_argv = [*argv[:-1], f"<PROMPT {len(prompt)} chars>"]
+                _progress(
+                    "cmd: "
+                    + " ".join(shlex.quote(part) for part in display_argv)
+                    + f" cwd={cwd or env.get('HERMES_CWD') or os.getcwd()} "
+                    + f"provider={self.slot.provider_id} credential={entry.label}"
+                )
                 result = subprocess.run(
                     argv,
                     cwd=cwd or env.get("HERMES_CWD") or os.getcwd(),

@@ -35,15 +35,13 @@ export const setupCommands: SlashCommand[] = [
 
       ctx.transcript.sys(`launching \`hermes-orchestrator ${dryRun ? '--dry-run ' : ''}${task}\`…`)
 
-      const seenProgress = new Set<string>()
       const result: LaunchResult = dryRun
         ? await launchHermesOrchestratorCaptured(['--dry-run', task])
         : await launchHermesOrchestratorStreaming([task], {
             onStderrLine: line => {
-              if (!line || seenProgress.has(line)) {
+              if (!line) {
                 return
               }
-              seenProgress.add(line)
               ctx.transcript.sys(line)
             }
           })

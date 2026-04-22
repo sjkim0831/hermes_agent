@@ -160,6 +160,17 @@ def _format_api_report(report: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _live_stage_stats(results: List[RuntimeResult]) -> Dict[str, Any]:
+    return {
+        "completed": len(results),
+        "successes": sum(1 for result in results if result.ok),
+        "errors": sum(1 for result in results if not result.ok),
+        "rate_limits": sum(1 for result in results if result.rate_limited),
+        "tokens": sum(int(result.tokens_used or 0) for result in results),
+        "apis": len({f"{result.provider_id}|{result.credential_label}|{result.model}" for result in results}),
+    }
+
+
 def _decompose_stage_tasks(state: OrchestratorState, role: str, workers: int) -> List[StageTask]:
     task = str(state.get("task") or "").strip()
     task_type = str(state.get("task_type") or "general")
@@ -501,7 +512,8 @@ def _run_parallel_role(
             future_map[future] = (runtime, stage_task)
             _progress(
                 f"stage {role}: assigned shard {stage_task.shard_index}/{stage_task.shard_count} "
-                f"to {runtime.slot.provider_id} model={_preferred_model_for_role(role, runtime, state)}"
+                f"to {runtime.slot.provider_id} model={_preferred_model_for_role(role, runtime, state)} "
+                f"pending={len(pending_tasks)} active={len(future_map)} idle={len(available_runtimes)}"
             )
 
         while pending_tasks and available_runtimes and len(future_map) < dispatch_workers:
@@ -529,11 +541,14 @@ def _run_parallel_role(
                     error=result.error,
                 )
                 results.append(result)
+                live = _live_stage_stats(results)
                 _progress(
                     f"stage {role}: completed shard {stage_task.shard_index}/{stage_task.shard_count} "
                     f"via {result.provider_id or runtime.slot.provider_id} "
                     f"status={'ok' if result.ok else 'error'} "
-                    f"completed={completed}/{len(stage_tasks)}"
+                    f"completed={completed}/{len(stage_tasks)} "
+                    f"apis={live['apis']} ok={live['successes']} err={live['errors']} "
+                    f"rate_limits={live['rate_limits']} tokens={live['tokens']}"
                 )
                 if not result.budget_blocked and not result.rate_limited:
                     available_runtimes.append(runtime)
@@ -691,6 +706,7 @@ def _stage_node(role: str, provider_family: str):
         additions = _summarize_results(results)
         if role == "implementer":
             _progress("completed stage: implementer")
+            _progress(_format_api_report({role: _build_stage_api_report(role, allocation, results)}))
             return {
                 **state,
                 "implementation": "\n\n".join(additions),
@@ -698,6 +714,7 @@ def _stage_node(role: str, provider_family: str):
             }
         if role == "verifier":
             _progress("completed stage: verifier")
+            _progress(_format_api_report({role: _build_stage_api_report(role, allocation, results)}))
             return {
                 **state,
                 "verification": "\n\n".join(additions),
@@ -706,12 +723,14 @@ def _stage_node(role: str, provider_family: str):
             }
         if role == "summarizer":
             _progress("completed stage: summarizer")
+            _progress(_format_api_report({role: _build_stage_api_report(role, allocation, results)}))
             return {
                 **state,
                 "summaries": additions,
                 "api_report": {**dict(state.get("api_report") or {}), role: _build_stage_api_report(role, allocation, results)},
             }
         _progress(f"completed stage: {role}")
+        _progress(_format_api_report({role: _build_stage_api_report(role, allocation, results)}))
         return {
             **state,
             key: current + additions,
