@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
@@ -49,6 +50,7 @@ class StageTask:
     instruction: str
     title: str = ""
     ownership: str = ""
+    estimated_seconds: float = 6.0
 
 
 def _progress(message: str) -> None:
@@ -234,6 +236,7 @@ def _decompose_stage_tasks(state: OrchestratorState, role: str, workers: int) ->
                 instruction=f"{hint}\nOriginal task: {task}",
                 title=f"{role}-{index + 1}",
                 ownership=f"{role} shard {index + 1}/{workers}",
+                estimated_seconds=TARGET_CHUNK_SECONDS,
             )
         )
     return tasks
@@ -258,6 +261,7 @@ def _expand_seed_tasks(role: str, desired_count: int, seeds: List[StageTask]) ->
                 instruction=f"{seed.instruction}\nAdditional partition: slice {partition}.",
                 title=f"{seed.title}-p{partition}",
                 ownership=f"{seed.ownership} / partition {partition}",
+                estimated_seconds=float(seed.estimated_seconds or TARGET_CHUNK_SECONDS),
             )
         )
     return expanded
@@ -276,7 +280,7 @@ def _plan_stage_tasks_with_header(
         "Your job is to split the work into unique, tiny, non-overlapping tasks for parallel workers.\n"
         "Do not duplicate work between workers. Do not leave ownership ambiguous.\n"
         "Return ONLY a JSON array.\n"
-        "Each item must contain: title, ownership, instruction.\n"
+        "Each item must contain: title, ownership, instruction, estimated_seconds.\n"
         f"Role: {role}\n"
         f"Task type: {state.get('task_type')}\n"
         f"Desired worker count: {desired_count}\n"
@@ -284,11 +288,14 @@ def _plan_stage_tasks_with_header(
         f"Supervisor plan:\n{state.get('plan') or '(none)'}\n\n"
         f"Original user task:\n{state.get('task')}\n\n"
         "Rules:\n"
+        "- First inventory the work as a list of concrete slices.\n"
+        "- Estimate how many seconds each slice should take.\n"
         "- Make each worker task as small as possible.\n"
         "- Avoid collisions: each task must own a distinct file area, route area, or verification slice.\n"
         "- If the task is about search, split by search target families.\n"
         "- If the task is about implementation, split by artifact or layout region.\n"
         f"- Produce exactly {planner_count} items.\n"
+        f"- Keep each item around {MIN_CHUNK_SECONDS:.0f}-{MAX_CHUNK_SECONDS:.0f} seconds when possible.\n"
         "- Make each item reusable as a seed for additional ordered partitions."
     )
 
@@ -335,6 +342,10 @@ def _plan_stage_tasks_with_header(
                 instruction=instruction,
                 title=title,
                 ownership=ownership,
+                estimated_seconds=max(
+                    MIN_CHUNK_SECONDS,
+                    min(MAX_CHUNK_SECONDS, float(row.get("estimated_seconds") or TARGET_CHUNK_SECONDS)),
+                ),
             )
         )
     if not tasks:
@@ -350,6 +361,7 @@ def _plan_stage_tasks_with_header(
                 instruction=fallback[(next_index - 1) % len(fallback)].instruction,
                 title=fallback[(next_index - 1) % len(fallback)].title,
                 ownership=fallback[(next_index - 1) % len(fallback)].ownership,
+                estimated_seconds=fallback[(next_index - 1) % len(fallback)].estimated_seconds,
             )
         )
     return _expand_seed_tasks(role, desired_count, tasks[:planner_count])
@@ -403,8 +415,52 @@ def _maximize_stage_workers(role: str, workers: int) -> int:
     return max(workers, _max_available_stage_workers(provider_family))
 
 
-def _planned_task_count(dispatch_workers: int) -> int:
-    return max(dispatch_workers, min(240, dispatch_workers * 6))
+TARGET_CHUNK_SECONDS = 6.0
+MIN_CHUNK_SECONDS = 3.0
+MAX_CHUNK_SECONDS = 10.0
+MAX_PLANNED_SHARDS = 400
+
+
+def _default_stage_seconds(role: str, task_type: str, difficulty: int, dispatch_workers: int) -> float:
+    per_worker = {
+        "finder": 18.0,
+        "reader": 22.0,
+        "summarizer": 14.0,
+        "implementer": 28.0,
+        "verifier": 12.0,
+    }.get(role, 16.0)
+    if task_type == "ui_design":
+        if role in {"finder", "reader"}:
+            per_worker += 8.0
+        if role == "implementer":
+            per_worker += 12.0
+    elif task_type == "repo_search":
+        if role in {"finder", "reader"}:
+            per_worker += 10.0
+    elif task_type == "bug_fix":
+        if role in {"reader", "implementer"}:
+            per_worker += 8.0
+    per_worker += max(0, difficulty - 1) * 4.0
+    return max(per_worker * dispatch_workers, dispatch_workers * TARGET_CHUNK_SECONDS)
+
+
+def _planned_task_count(
+    telemetry: TelemetryStore,
+    role: str,
+    task_type: str,
+    difficulty: int,
+    dispatch_workers: int,
+) -> int:
+    stats = telemetry.stage_stats(task_type, role)
+    avg_duration = float(stats.get("avg_duration_seconds") or 0.0)
+    historical_worker_count = max(1, int(stats.get("last_worker_count") or dispatch_workers))
+    if avg_duration > 0:
+        estimated_total_seconds = avg_duration * (dispatch_workers / historical_worker_count)
+    else:
+        estimated_total_seconds = _default_stage_seconds(role, task_type, difficulty, dispatch_workers)
+    target_chunk_seconds = min(MAX_CHUNK_SECONDS, max(MIN_CHUNK_SECONDS, TARGET_CHUNK_SECONDS))
+    planned = int(math.ceil(estimated_total_seconds / target_chunk_seconds))
+    return max(dispatch_workers, min(MAX_PLANNED_SHARDS, planned))
 
 
 def _dispatch_worker_count(role: str, task_type: str, difficulty: int, workers: int) -> int:
@@ -432,8 +488,10 @@ def _run_parallel_role(
     task = state["task"]
     cwd = state.get("cwd") or None
     telemetry = TelemetryStore()
-    dispatch_workers = _dispatch_worker_count(role, str(state.get("task_type") or "general"), int(state.get("difficulty") or 1), allocation.workers)
-    planned_tasks = _planned_task_count(dispatch_workers)
+    task_type = str(state.get("task_type") or "general")
+    difficulty = int(state.get("difficulty") or 1)
+    dispatch_workers = _dispatch_worker_count(role, task_type, difficulty, allocation.workers)
+    planned_tasks = _planned_task_count(telemetry, role, task_type, difficulty, dispatch_workers)
     stage_tasks = _plan_stage_tasks_with_header(state, role, planned_tasks)
     if not stage_tasks:
         stage_tasks = [
@@ -489,6 +547,16 @@ def _run_parallel_role(
     _progress(
         f"dispatching stage {role}: runtimes={len(runtimes)} active_workers={dispatch_workers} planned_shards={len(stage_tasks)}"
     )
+    _progress(
+        f"stage {role}: target shard duration {MIN_CHUNK_SECONDS:.0f}-{MAX_CHUNK_SECONDS:.0f}s "
+        f"(goal ~{TARGET_CHUNK_SECONDS:.0f}s)"
+    )
+    preview = ", ".join(
+        f"{task.title}@~{round(float(task.estimated_seconds or TARGET_CHUNK_SECONDS), 1)}s"
+        for task in stage_tasks[: min(8, len(stage_tasks))]
+    )
+    if preview:
+        _progress(f"stage {role}: task list preview -> {preview}")
     with ThreadPoolExecutor(max_workers=max(1, dispatch_workers)) as executor:
         pending_tasks = list(stage_tasks)
         available_runtimes = list(runtimes)
@@ -501,6 +569,7 @@ def _run_parallel_role(
                 + f"\n\nShard assignment: {stage_task.shard_index}/{stage_task.shard_count}"
                 + f"\nTask title: {stage_task.title}"
                 + f"\nOwnership boundary: {stage_task.ownership}"
+                + f"\nEstimated shard time: ~{round(float(stage_task.estimated_seconds or TARGET_CHUNK_SECONDS), 1)} seconds"
                 + f"\nShard-specific objective:\n{stage_task.instruction}"
             )
             future = executor.submit(
@@ -513,6 +582,7 @@ def _run_parallel_role(
             _progress(
                 f"stage {role}: assigned shard {stage_task.shard_index}/{stage_task.shard_count} "
                 f"to {runtime.slot.provider_id} model={_preferred_model_for_role(role, runtime, state)} "
+                f"eta~{round(float(stage_task.estimated_seconds or TARGET_CHUNK_SECONDS), 1)}s "
                 f"pending={len(pending_tasks)} active={len(future_map)} idle={len(available_runtimes)}"
             )
 
@@ -542,13 +612,15 @@ def _run_parallel_role(
                 )
                 results.append(result)
                 live = _live_stage_stats(results)
+                next_title = pending_tasks[0].title if pending_tasks else "(none)"
                 _progress(
                     f"stage {role}: completed shard {stage_task.shard_index}/{stage_task.shard_count} "
                     f"via {result.provider_id or runtime.slot.provider_id} "
                     f"status={'ok' if result.ok else 'error'} "
                     f"completed={completed}/{len(stage_tasks)} "
                     f"apis={live['apis']} ok={live['successes']} err={live['errors']} "
-                    f"rate_limits={live['rate_limits']} tokens={live['tokens']}"
+                    f"rate_limits={live['rate_limits']} tokens={live['tokens']} "
+                    f"next={next_title}"
                 )
                 if not result.budget_blocked and not result.rate_limited:
                     available_runtimes.append(runtime)
@@ -625,6 +697,7 @@ def _classify(state: OrchestratorState) -> OrchestratorState:
         )[role]
         boosted_workers = _boost_search_workers(role, task_type, difficulty, role_alloc.workers)
         boosted_workers = _maximize_stage_workers(role, boosted_workers)
+        planned_shards = _planned_task_count(telemetry, role, task_type, difficulty, boosted_workers)
         allocations[role] = StageAllocation(
             role=role,
             workers=boosted_workers,
@@ -632,8 +705,19 @@ def _classify(state: OrchestratorState) -> OrchestratorState:
             token_limit=role_alloc.token_limit,
             overload_ratio=role_alloc.overload_ratio,
         )
+        _progress(
+            f"classify {role}: workers={boosted_workers} planned_shards={planned_shards} "
+            f"target={MIN_CHUNK_SECONDS:.0f}-{MAX_CHUNK_SECONDS:.0f}s per shard"
+        )
     stage_tasks = {
-        role: [task.instruction for task in _decompose_stage_tasks(state, role, _planned_task_count(allocations[role].workers))]
+        role: [
+            task.instruction
+            for task in _decompose_stage_tasks(
+                state,
+                role,
+                _planned_task_count(telemetry, role, task_type, difficulty, allocations[role].workers),
+            )
+        ]
         for role in ROLE_NAMES
     }
     return {
