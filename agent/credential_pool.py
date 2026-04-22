@@ -900,6 +900,27 @@ class CredentialPool:
             return None, None, f"No credential #{index}."
         return None, None, f'No credential matching "{raw}".'
 
+    def select_target(self, target: Any) -> Tuple[Optional[PooledCredential], Optional[str]]:
+        """Persistently promote a credential to primary for this provider.
+
+        The chosen entry is moved to priority 0, preserving the relative order
+        of the remaining entries. This makes future pool loads prefer it via
+        peek()/selection even after the current process exits.
+        """
+        index, matched, error = self.resolve_target(target)
+        if matched is None or index is None:
+            return None, error
+
+        chosen = self._entries.pop(index - 1)
+        reordered = [chosen, *self._entries]
+        self._entries = [
+            replace(entry, priority=new_priority)
+            for new_priority, entry in enumerate(reordered)
+        ]
+        self._current_id = chosen.id
+        self._persist()
+        return self._entries[0], None
+
     def add_entry(self, entry: PooledCredential) -> PooledCredential:
         entry = replace(entry, priority=_next_priority(self._entries))
         self._entries.append(entry)
@@ -1193,7 +1214,23 @@ def _seed_from_env(provider: str, entries: List[PooledCredential]) -> Tuple[bool
             "ANTHROPIC_API_KEY",
         ]
 
+    seen_env_vars: Set[str] = set()
+    expanded_env_vars: List[str] = []
     for env_var in env_vars:
+        candidates = [env_var]
+        prefix = f"{env_var}_"
+        suffixed = sorted(
+            key for key in os.environ
+            if key.startswith(prefix) and key[len(prefix):].strip()
+        )
+        candidates.extend(suffixed)
+        for candidate in candidates:
+            if candidate in seen_env_vars:
+                continue
+            seen_env_vars.add(candidate)
+            expanded_env_vars.append(candidate)
+
+    for env_var in expanded_env_vars:
         token = os.getenv(env_var, "").strip()
         if not token:
             continue
@@ -1242,12 +1279,29 @@ def _seed_custom_pool(pool_key: str, entries: List[PooledCredential]) -> Tuple[b
     changed = False
     active_sources: Set[str] = set()
 
-    # Seed from the custom_providers config entry's api_key field
+    # Seed from the custom_providers config entry's key_env / api_key fields
     cp_config = _get_custom_provider_config(pool_key)
     if cp_config:
+        key_env = str(cp_config.get("key_env") or "").strip()
+        env_api_key = os.getenv(key_env, "").strip() if key_env else ""
         api_key = str(cp_config.get("api_key") or "").strip()
         base_url = str(cp_config.get("base_url") or "").strip().rstrip("/")
         name = str(cp_config.get("name") or "").strip()
+        if env_api_key:
+            source = f"env:{key_env}"
+            active_sources.add(source)
+            changed |= _upsert_entry(
+                entries,
+                pool_key,
+                source,
+                {
+                    "source": source,
+                    "auth_type": AUTH_TYPE_API_KEY,
+                    "access_token": env_api_key,
+                    "base_url": base_url,
+                    "label": key_env or name or source,
+                },
+            )
         if api_key:
             source = f"config:{name}"
             active_sources.add(source)

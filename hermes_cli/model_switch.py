@@ -659,10 +659,12 @@ def switch_model(
     api_key = current_api_key
     base_url = current_base_url
     api_mode = ""
+    runtime_provider = ""
 
     if provider_changed or explicit_provider:
         try:
             runtime = resolve_runtime_provider(requested=target_provider)
+            runtime_provider = str(runtime.get("provider", "") or "")
             api_key = runtime.get("api_key", "")
             base_url = runtime.get("base_url", "")
             api_mode = runtime.get("api_mode", "")
@@ -680,6 +682,7 @@ def switch_model(
     else:
         try:
             runtime = resolve_runtime_provider(requested=current_provider)
+            runtime_provider = str(runtime.get("provider", "") or "")
             api_key = runtime.get("api_key", "")
             base_url = runtime.get("base_url", "")
             api_mode = runtime.get("api_mode", "")
@@ -699,20 +702,28 @@ def switch_model(
     new_model = normalize_model_for_provider(new_model, target_provider)
 
     # --- Validate ---
-    try:
-        validation = validate_requested_model(
-            new_model,
-            target_provider,
-            api_key=api_key,
-            base_url=base_url,
-        )
-    except Exception as e:
+    if runtime_provider in {"codex-cerebras-cli", "codex-gemini-cli"}:
         validation = {
-            "accepted": False,
-            "persist": False,
-            "recognized": False,
-            "message": f"Could not validate `{new_model}`: {e}",
+            "accepted": True,
+            "persist": True,
+            "recognized": True,
+            "message": "",
         }
+    else:
+        try:
+            validation = validate_requested_model(
+                new_model,
+                target_provider,
+                api_key=api_key,
+                base_url=base_url,
+            )
+        except Exception as e:
+            validation = {
+                "accepted": False,
+                "persist": False,
+                "recognized": False,
+                "message": f"Could not validate `{new_model}`: {e}",
+            }
 
     if not validation.get("accepted"):
         msg = validation.get("message", "Invalid model")

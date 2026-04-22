@@ -33,6 +33,31 @@ from hermes_cli.config import get_compatible_custom_providers, load_config
 from hermes_constants import OPENROUTER_BASE_URL
 
 
+def _resolve_named_custom_pool_entry(custom_provider: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    name = str(custom_provider.get("name", "") or "").strip()
+    if not name:
+        return None
+    try:
+        from agent.credential_pool import CUSTOM_POOL_PREFIX, load_pool
+
+        pool = load_pool(f"{CUSTOM_POOL_PREFIX}{_normalize_custom_provider_name(name)}")
+        entry = pool.peek()
+    except Exception:
+        return None
+    if not entry:
+        return None
+    api_key = str(getattr(entry, "runtime_api_key", "") or "").strip()
+    base_url = str(getattr(entry, "runtime_base_url", "") or "").strip().rstrip("/")
+    if not api_key:
+        return None
+    return {
+        "api_key": api_key,
+        "base_url": base_url,
+        "label": str(getattr(entry, "label", "") or "").strip(),
+        "source": str(getattr(entry, "source", "") or "").strip(),
+    }
+
+
 def _normalize_custom_provider_name(value: str) -> str:
     return value.strip().lower().replace(" ", "-")
 
@@ -396,10 +421,12 @@ def _resolve_named_custom_runtime(
         return None
 
     provider_key = str(custom_provider.get("provider_key", "") or "").strip()
+    pooled_custom = _resolve_named_custom_pool_entry(custom_provider)
 
     api_key_candidates = [
         (explicit_api_key or "").strip(),
         str(custom_provider.get("api_key", "") or "").strip(),
+        str((pooled_custom or {}).get("api_key", "")).strip(),
         os.getenv(str(custom_provider.get("key_env", "") or "").strip(), "").strip(),
         os.getenv("OPENAI_API_KEY", "").strip(),
         os.getenv("OPENROUTER_API_KEY", "").strip(),
@@ -415,7 +442,10 @@ def _resolve_named_custom_runtime(
             "api_key": api_key or "no-key-required",
             "command": process_creds.get("command", ""),
             "args": list(process_creds.get("args") or []),
-            "source": f"custom_provider:{custom_provider.get('name', requested_provider)}",
+            "source": (
+                f"credential_pool:{(pooled_custom or {}).get('label') or custom_provider.get('name', requested_provider)}"
+                if pooled_custom else f"custom_provider:{custom_provider.get('name', requested_provider)}"
+            ),
         }
         model_name = custom_provider.get("model")
         if model_name:
@@ -430,7 +460,10 @@ def _resolve_named_custom_runtime(
             "api_key": api_key or "no-key-required",
             "command": process_creds.get("command", ""),
             "args": list(process_creds.get("args") or []),
-            "source": f"custom_provider:{custom_provider.get('name', requested_provider)}",
+            "source": (
+                f"credential_pool:{(pooled_custom or {}).get('label') or custom_provider.get('name', requested_provider)}"
+                if pooled_custom else f"custom_provider:{custom_provider.get('name', requested_provider)}"
+            ),
         }
         model_name = custom_provider.get("model")
         if model_name:

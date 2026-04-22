@@ -11,6 +11,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 from hermes_constants import get_hermes_home
 from hermes_cli.env_loader import load_hermes_dotenv
@@ -657,6 +658,48 @@ def _routing_status_for_session(session: dict | None = None) -> dict:
             "provider": str(planning.get("provider", "") or ""),
             "model": str(planning.get("model", "") or ""),
         },
+    }
+
+
+def _auth_status_for_provider(provider: str) -> dict:
+    from agent.credential_pool import get_pool_strategy, load_pool
+    from hermes_cli.auth import PROVIDER_REGISTRY
+    from hermes_cli.auth_commands import _OAUTH_CAPABLE_PROVIDERS, _format_exhausted_status, _get_custom_provider_names
+
+    display_name = provider
+    for custom_name, pool_key, _provider_key in _get_custom_provider_names():
+        if pool_key == provider:
+            display_name = custom_name
+            break
+    pconfig = PROVIDER_REGISTRY.get(provider)
+    if pconfig and getattr(pconfig, "name", ""):
+        display_name = pconfig.name
+
+    pool = load_pool(provider)
+    entries = []
+    current = pool.peek()
+    for entry in pool.entries():
+        status = _format_exhausted_status(entry).strip()
+        entries.append(
+            {
+                "auth_type": entry.auth_type,
+                "id": entry.id,
+                "is_current": bool(current is not None and current.id == entry.id),
+                "label": entry.label,
+                "source": entry.source,
+                "status": status or "ready",
+            }
+        )
+
+    current_label = current.label if current is not None else ""
+    return {
+        "current_label": current_label,
+        "entries": entries,
+        "entry_count": len(entries),
+        "name": display_name,
+        "oauth_capable": provider in _OAUTH_CAPABLE_PROVIDERS,
+        "slug": provider,
+        "strategy": get_pool_strategy(provider),
     }
 
 
@@ -2212,6 +2255,112 @@ def _(rid, params: dict) -> dict:
     _write_config_key("auxiliary.planning.model", model)
     session = _sessions.get(params.get("session_id", ""))
     return _ok(rid, _routing_status_for_session(session))
+
+
+@method("auth.status")
+def _(rid, params: dict) -> dict:
+    from agent.credential_pool import list_custom_pool_providers
+    from hermes_cli.auth import PROVIDER_REGISTRY
+    from hermes_cli.auth_commands import _get_custom_provider_names
+
+    providers = []
+    for provider in sorted(PROVIDER_REGISTRY):
+        providers.append(_auth_status_for_provider(provider))
+
+    known_custom = {pool_key for _name, pool_key, _provider_key in _get_custom_provider_names()}
+    known_custom.update(list_custom_pool_providers())
+    for pool_key in sorted(known_custom):
+        providers.append(_auth_status_for_provider(pool_key))
+
+    return _ok(rid, {"providers": providers})
+
+
+@method("auth.add_api_key")
+def _(rid, params: dict) -> dict:
+    from hermes_cli.auth_commands import auth_add_command
+
+    try:
+        auth_add_command(
+            SimpleNamespace(
+                provider=str(params.get("provider", "") or ""),
+                auth_type="api_key",
+                label=str(params.get("label", "") or ""),
+                api_key=str(params.get("api_key", "") or ""),
+                portal_url=None,
+                inference_url=None,
+                client_id=None,
+                scope=None,
+                no_browser=False,
+                timeout=None,
+                insecure=False,
+                ca_bundle=None,
+            )
+        )
+    except SystemExit as exc:
+        return _err(rid, 4002, str(exc))
+    return _ok(rid, {"ok": True})
+
+
+@method("auth.select")
+def _(rid, params: dict) -> dict:
+    from hermes_cli.auth_commands import auth_select_command
+
+    try:
+        auth_select_command(
+            SimpleNamespace(
+                provider=str(params.get("provider", "") or ""),
+                target=params.get("target"),
+            )
+        )
+    except SystemExit as exc:
+        return _err(rid, 4002, str(exc))
+    return _ok(rid, {"ok": True})
+
+
+@method("auth.remove")
+def _(rid, params: dict) -> dict:
+    from hermes_cli.auth_commands import auth_remove_command
+
+    try:
+        auth_remove_command(
+            SimpleNamespace(
+                provider=str(params.get("provider", "") or ""),
+                target=params.get("target"),
+            )
+        )
+    except SystemExit as exc:
+        return _err(rid, 4002, str(exc))
+    return _ok(rid, {"ok": True})
+
+
+@method("auth.reset")
+def _(rid, params: dict) -> dict:
+    from hermes_cli.auth_commands import auth_reset_command
+
+    try:
+        auth_reset_command(SimpleNamespace(provider=str(params.get("provider", "") or "")))
+    except SystemExit as exc:
+        return _err(rid, 4002, str(exc))
+    return _ok(rid, {"ok": True})
+
+
+@method("auth.strategy")
+def _(rid, params: dict) -> dict:
+    from hermes_cli.config import load_config, save_config
+
+    provider = str(params.get("provider", "") or "").strip()
+    strategy = str(params.get("strategy", "") or "").strip()
+    if not provider or not strategy:
+        return _err(rid, 4002, "provider and strategy required")
+
+    cfg = load_config()
+    pool_strategies = cfg.get("credential_pool_strategies") or {}
+    if not isinstance(pool_strategies, dict):
+        pool_strategies = {}
+    pool_strategies[provider] = strategy
+    cfg["credential_pool_strategies"] = pool_strategies
+    save_config(cfg)
+    return _ok(rid, {"strategy": strategy})
 
 
 @method("setup.status")
