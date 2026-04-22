@@ -1071,6 +1071,38 @@ def test_routing_set_planner_persists_auxiliary_planning(monkeypatch):
     assert writes["auxiliary.planning.model"] == "gemini-2.5-flash"
 
 
+def test_routing_set_planner_off_clears_auxiliary_planning(monkeypatch):
+    writes = {}
+
+    monkeypatch.setattr(server, "_write_config_key", lambda key, value: writes.__setitem__(key, value))
+    monkeypatch.setattr(
+        server,
+        "_routing_status_for_session",
+        lambda session=None: {
+            "executor": {"provider": "custom:cerebras-api-101", "model": "qwen-3-235b-a22b-instruct-2507"},
+            "planner": {"provider": "", "model": ""},
+        },
+    )
+
+    resp = server.handle_request(
+        {
+            "id": "1",
+            "method": "routing.set",
+            "params": {
+                "role": "planner",
+                "provider": "",
+                "model": "",
+            },
+        }
+    )
+
+    assert resp["result"]["planner"]["provider"] == ""
+    assert writes["auxiliary.planning.provider"] == ""
+    assert writes["auxiliary.planning.model"] == ""
+    assert writes["auxiliary.planning.base_url"] == ""
+    assert writes["auxiliary.planning.api_key"] == ""
+
+
 def test_mirror_slash_side_effects_rejects_mutating_commands_while_running(monkeypatch):
     """Slash worker passthrough (e.g. /model, /personality, /prompt,
     /compress) must reject during an in-flight turn.  Same race as

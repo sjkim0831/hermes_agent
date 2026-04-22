@@ -11,6 +11,11 @@ const VISIBLE = 12
 const pageOffset = (count: number, sel: number) => Math.max(0, Math.min(sel - Math.floor(VISIBLE / 2), count - VISIBLE))
 
 type Role = 'executor' | 'planner'
+interface RoutingProviderOption {
+  models?: string[]
+  name: string
+  slug: string
+}
 
 interface RoutingState {
   executor?: { model?: string; provider?: string; warning?: string }
@@ -31,7 +36,11 @@ export function RoutingPicker({ gw, onClose, sessionId, t }: RoutingPickerProps)
   const roles: Role[] = ['executor', 'planner']
   const role = roles[roleIdx] ?? 'executor'
   const customProviders = providers.filter(provider => provider.slug.startsWith('custom:'))
-  const provider = customProviders[providerIdx]
+  const plannerOptions: RoutingProviderOption[] = [{ name: 'Planner Off', slug: '', models: [] }, ...customProviders]
+  const providerOptions: RoutingProviderOption[] = role === 'planner' ? plannerOptions : customProviders
+  const provider = providerOptions[providerIdx]
+  const plannerEnabled = Boolean(routing.planner?.provider)
+  const modeLabel = plannerEnabled ? 'Dual routing active' : 'Single-provider mode'
 
   const load = () => {
     setLoading(true)
@@ -55,7 +64,8 @@ export function RoutingPicker({ gw, onClose, sessionId, t }: RoutingPickerProps)
         const nextProviders = (models.providers ?? []).filter(provider => provider.slug.startsWith('custom:'))
         setProviders(nextProviders)
         setRouting(routingConfig ?? {})
-        setProviderIdx(current => Math.min(current, Math.max(0, nextProviders.length - 1)))
+        const maxProviderIdx = role === 'planner' ? nextProviders.length : Math.max(0, nextProviders.length - 1)
+        setProviderIdx(current => Math.min(current, maxProviderIdx))
         setLoading(false)
       })
       .catch((e: unknown) => {
@@ -70,6 +80,36 @@ export function RoutingPicker({ gw, onClose, sessionId, t }: RoutingPickerProps)
 
   const applySelection = () => {
     if (!provider || busy) {
+      return
+    }
+
+    if (role === 'planner' && !provider.slug) {
+      setBusy('disabling planner…')
+      setErr('')
+      setNotice('')
+
+      gw.request<RoutingStatusResponse>('routing.set', {
+        model: '',
+        provider: '',
+        role,
+        session_id: sessionId
+      })
+        .then(raw => {
+          const result = asRpcResult<RoutingStatusResponse>(raw)
+          setBusy('')
+          if (!result) {
+            setErr('invalid response: routing.set')
+            return
+          }
+          setRouting(result)
+          setNotice('planner disabled · single-provider mode')
+          setStage('role')
+        })
+        .catch((e: unknown) => {
+          setBusy('')
+          setErr(rpcErrorMessage(e))
+        })
+
       return
     }
 
@@ -196,6 +236,7 @@ export function RoutingPicker({ gw, onClose, sessionId, t }: RoutingPickerProps)
         <Text bold color={t.color.amber}>
           Planner / Executor Routing
         </Text>
+        <Text color={plannerEnabled ? t.color.ok : t.color.dim}>{modeLabel}</Text>
         {busy ? <Text color={t.color.amber}>{busy}</Text> : null}
         {err ? <Text color={t.color.label}>error: {err}</Text> : null}
         {notice ? <Text color={t.color.ok}>{notice}</Text> : null}
@@ -220,13 +261,14 @@ export function RoutingPicker({ gw, onClose, sessionId, t }: RoutingPickerProps)
     )
   }
 
-  const off = pageOffset(customProviders.length, providerIdx)
+  const off = pageOffset(providerOptions.length, providerIdx)
 
   return (
     <Box flexDirection="column" width={92}>
       <Text bold color={t.color.amber}>
         Select {role === 'executor' ? 'Executor' : 'Planner'} Provider
       </Text>
+      <Text color={plannerEnabled ? t.color.ok : t.color.dim}>mode: {modeLabel}</Text>
       <Text color={t.color.dim}>
         current {role}: {(role === 'executor' ? routing.executor?.provider : routing.planner?.provider) || '(unset)'}
       </Text>
@@ -234,10 +276,10 @@ export function RoutingPicker({ gw, onClose, sessionId, t }: RoutingPickerProps)
       {notice ? <Text color={t.color.ok}>{notice}</Text> : null}
       {off > 0 ? <Text color={t.color.dim}> ↑ {off} more</Text> : null}
 
-      {customProviders.slice(off, off + VISIBLE).map((item, i) => {
+      {providerOptions.slice(off, off + VISIBLE).map((item, i) => {
         const idx = off + i
         const active = idx === providerIdx
-        const model = item.models?.[0] ?? '(no model)'
+        const model = item.slug ? item.models?.[0] ?? '(no model)' : 'disable planner pre-routing'
 
         return (
           <Text color={active ? t.color.cornsilk : t.color.dim} key={`${item.slug}:${model}`}>
@@ -247,8 +289,8 @@ export function RoutingPicker({ gw, onClose, sessionId, t }: RoutingPickerProps)
         )
       })}
 
-      {off + VISIBLE < customProviders.length ? (
-        <Text color={t.color.dim}> ↓ {customProviders.length - off - VISIBLE} more</Text>
+      {off + VISIBLE < providerOptions.length ? (
+        <Text color={t.color.dim}> ↓ {providerOptions.length - off - VISIBLE} more</Text>
       ) : null}
       <Text color={t.color.dim}>Enter apply · 1-9,0 quick · Esc back</Text>
     </Box>

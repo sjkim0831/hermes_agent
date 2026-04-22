@@ -2237,7 +2237,7 @@ def _(rid, params: dict) -> dict:
 
     if role not in {"planner", "executor"}:
         return _err(rid, 4002, f"unknown routing role: {role}")
-    if not provider:
+    if role == "executor" and not provider:
         return _err(rid, 4002, "provider required")
 
     if role == "executor":
@@ -2262,6 +2262,14 @@ def _(rid, params: dict) -> dict:
         payload = _routing_status_for_session(session)
         payload["executor"]["warning"] = result.get("warning", "")
         return _ok(rid, payload)
+
+    if not provider:
+        _write_config_key("auxiliary.planning.provider", "")
+        _write_config_key("auxiliary.planning.model", "")
+        _write_config_key("auxiliary.planning.base_url", "")
+        _write_config_key("auxiliary.planning.api_key", "")
+        session = _sessions.get(params.get("session_id", ""))
+        return _ok(rid, _routing_status_for_session(session))
 
     _write_config_key("auxiliary.planning.provider", provider)
     _write_config_key("auxiliary.planning.model", model)
