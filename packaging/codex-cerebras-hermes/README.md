@@ -62,9 +62,4 @@ Hermes model/provider selection shows `Cerebras API 101`, `Cerebras API 102`,
 and so on. Each entry reads a different environment variable from
 `~/.hermes/.env`, for example `CEREBRAS_API_KEY_101`.
 
-The installer also creates `Gemini API 101`, `Gemini API 102`, and so on. These
-entries use Google's native Gemini endpoint and read `GEMINI_API_KEY_101`,
-`GEMINI_API_KEY_102`, etc. from `~/.hermes/.env`. The default Gemini model is
-`gemini-2.5-flash`; some API keys have no free-tier quota for `gemini-2.5-pro`.
-
 Do not commit real API keys.

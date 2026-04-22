@@ -632,7 +632,6 @@ def switch_model(
 
     provider_changed = target_provider != current_provider
     provider_label = get_label(target_provider)
-    persist_provider = target_provider
     if target_provider.startswith("custom:"):
         custom_pdef = resolve_provider_full(
             target_provider,
@@ -646,7 +645,6 @@ def switch_model(
     api_key = current_api_key
     base_url = current_base_url
     api_mode = ""
-    runtime_provider = target_provider
 
     if provider_changed or explicit_provider:
         try:
@@ -654,9 +652,6 @@ def switch_model(
             api_key = runtime.get("api_key", "")
             base_url = runtime.get("base_url", "")
             api_mode = runtime.get("api_mode", "")
-            runtime_provider = str(runtime.get("provider") or target_provider)
-            if target_provider.startswith("custom:"):
-                target_provider = runtime_provider
         except Exception as e:
             return ModelSwitchResult(
                 success=False,
@@ -674,7 +669,6 @@ def switch_model(
             api_key = runtime.get("api_key", "")
             base_url = runtime.get("base_url", "")
             api_mode = runtime.get("api_mode", "")
-            runtime_provider = str(runtime.get("provider") or target_provider)
         except Exception:
             pass
 
@@ -691,27 +685,20 @@ def switch_model(
     new_model = normalize_model_for_provider(new_model, target_provider)
 
     # --- Validate ---
-    if persist_provider.startswith("custom:") and runtime_provider in {"codex-cerebras-cli", "gemini"}:
-        # Named custom provider entries already pin the exact runtime backend,
-        # model, endpoint, and key_env in config.yaml. Avoid probing these
-        # bridge providers during TUI switches; probing codex-cerebras would
-        # call a marker URL, and probing Gemini here can block the picker.
-        validation = {"accepted": True, "persist": True, "recognized": True}
-    else:
-        try:
-            validation = validate_requested_model(
-                new_model,
-                target_provider,
-                api_key=api_key,
-                base_url=base_url,
-            )
-        except Exception as e:
-            validation = {
-                "accepted": False,
-                "persist": False,
-                "recognized": False,
-                "message": f"Could not validate `{new_model}`: {e}",
-            }
+    try:
+        validation = validate_requested_model(
+            new_model,
+            target_provider,
+            api_key=api_key,
+            base_url=base_url,
+        )
+    except Exception as e:
+        validation = {
+            "accepted": False,
+            "persist": False,
+            "recognized": False,
+            "message": f"Could not validate `{new_model}`: {e}",
+        }
 
     if not validation.get("accepted"):
         msg = validation.get("message", "Invalid model")

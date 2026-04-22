@@ -57,18 +57,6 @@ LEGACY_HOME="${CODEX_CEREBRAS_HOME:-$CODEX_HOME/cerebras-legacy-home}"
 LEGACY_CLI_DIR="${CODEX_CEREBRAS_RUNTIME_DIR:-$CODEX_HOME/cerebras-legacy-cli}"
 LEGACY_CODEX="$LEGACY_CLI_DIR/node_modules/.bin/codex"
 
-if [[ ! -x "$LEGACY_CODEX" && -d /mnt/c/Users ]]; then
-  for candidate_home in /mnt/c/Users/*/.codex; do
-    candidate_codex="$candidate_home/cerebras-legacy-cli/node_modules/.bin/codex"
-    if [[ -x "$candidate_codex" ]]; then
-      LEGACY_HOME="${CODEX_CEREBRAS_HOME:-$candidate_home/cerebras-legacy-home}"
-      LEGACY_CLI_DIR="${CODEX_CEREBRAS_RUNTIME_DIR:-$candidate_home/cerebras-legacy-cli}"
-      LEGACY_CODEX="$candidate_codex"
-      break
-    fi
-  done
-fi
-
 if [[ ! -x "$LEGACY_CODEX" ]]; then
   echo "codex-cerebras is not installed yet." >&2
   echo "Run: scripts/install-codex-cerebras.sh" >&2

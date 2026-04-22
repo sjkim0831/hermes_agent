@@ -163,7 +163,6 @@ class CodexCerebrasCLIClient:
             cwd=cwd,
             env=env,
             capture_output=True,
-            stdin=subprocess.DEVNULL,
             text=True,
             timeout=timeout,
             check=False,

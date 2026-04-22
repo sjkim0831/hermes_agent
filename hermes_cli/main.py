@@ -1435,7 +1435,7 @@ def select_provider_and_model(args=None):
                 continue
             key = "custom:" + name.lower().replace(" ", "-")
             provider_key = (entry.get("provider_key") or "").strip()
-            if provider_key and provider_key not in {"codex-cerebras-cli", "gemini"}:
+            if provider_key and provider_key != "codex-cerebras-cli":
                 try:
                     resolve_provider(provider_key)
                 except AuthError:
@@ -2815,7 +2815,7 @@ def _model_flow_named_custom(config, provider_info):
         model = {"default": model} if model else {}
     cfg["model"] = model
     if provider_key:
-        model["provider"] = key if provider_key in {"codex-cerebras-cli", "gemini"} else provider_key
+        model["provider"] = key if provider_key == "codex-cerebras-cli" else provider_key
         model.pop("base_url", None)
         model.pop("api_key", None)
     else:

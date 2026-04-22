@@ -447,16 +447,10 @@ export function useMainApp(gw: GatewayClient) {
   useEffect(() => {
     const handler = (ev: GatewayEvent) => onEventRef.current(ev)
 
-    const exitHandler = (code?: number | null) => {
-      if (code === 0) {
-        patchUiState({ busy: false, status: 'ready' })
-        turnController.pushActivity('gateway closed cleanly', 'info', 'gateway-clean-exit')
-        return
-      }
-
+    const exitHandler = () => {
       patchUiState({ busy: false, sid: null, status: 'gateway exited' })
-      turnController.pushActivity(`gateway exited${code == null ? '' : ` (${code})`} · /logs to inspect`, 'error')
-      sys(`error: gateway exited${code == null ? '' : ` (${code})`}`)
+      turnController.pushActivity('gateway exited · /logs to inspect', 'error')
+      sys('error: gateway exited')
     }
 
     gw.on('event', handler)
@@ -466,6 +460,7 @@ export function useMainApp(gw: GatewayClient) {
     return () => {
       gw.off('event', handler)
       gw.off('exit', exitHandler)
+      gw.kill()
     }
   }, [gw, sys])
 

@@ -20,10 +20,6 @@ const quietRpc = async <T extends Record<string, any> = Record<string, any>>(
   method: string,
   params: Record<string, unknown> = {}
 ): Promise<null | T> => {
-  if (!gw.isRunning()) {
-    return null
-  }
-
   try {
     return asRpcResult<T>(await gw.request<T>(method, params))
   } catch {

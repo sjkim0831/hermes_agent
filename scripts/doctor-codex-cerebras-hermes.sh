@@ -30,23 +30,12 @@ providers = [
     if isinstance(p, dict) and p.get("provider_key") == "codex-cerebras-cli"
 ]
 print(f"  custom Cerebras providers: {len(providers)}")
-gemini_providers = [
-    p for p in get_compatible_custom_providers(cfg)
-    if isinstance(p, dict) and p.get("provider_key") == "gemini"
-]
-print(f"  custom Gemini providers: {len(gemini_providers)}")
 
 runtime = resolve_runtime_provider(requested="custom:cerebras-api-101")
 print(f"  runtime provider: {runtime.get('provider')}")
 print(f"  command: {runtime.get('command')}")
 print(f"  model: {runtime.get('model')}")
 print(f"  api key loaded: {bool(runtime.get('api_key') and runtime.get('api_key') != 'no-key-required')}")
-
-if gemini_providers:
-    gemini_runtime = resolve_runtime_provider(requested="custom:gemini-api-101")
-    print(f"  gemini runtime provider: {gemini_runtime.get('provider')}")
-    print(f"  gemini model: {gemini_runtime.get('model')}")
-    print(f"  gemini api key loaded: {bool(gemini_runtime.get('api_key') and gemini_runtime.get('api_key') != 'no-key-required')}")
 
 import agent.codex_cerebras_cli_client as bridge
 print(f"  bridge marker: {bridge.CODEX_CEREBRAS_MARKER_BASE_URL}")
