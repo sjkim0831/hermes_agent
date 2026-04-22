@@ -7,10 +7,7 @@ import json
 import os
 import sys
 
-from .config import list_provider_slots, summarize_capacity
-from .graph import build_graph
-from .scheduler import build_stage_allocations
-from .telemetry import TelemetryStore, classify_task_type, estimate_difficulty, estimate_tokens
+from .graph import _classify, build_graph
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -26,30 +23,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     task = " ".join(args.task).strip()
     if args.dry_run:
-        telemetry = TelemetryStore()
-        task_type = classify_task_type(task)
-        difficulty = estimate_difficulty(task)
-        estimated_tokens = estimate_tokens(task)
-        gemini_slots = list_provider_slots("gemini")
-        cerebras_slots = list_provider_slots("cerebras")
-        primary_limit = gemini_slots[0].token_limit if gemini_slots else (cerebras_slots[0].token_limit if cerebras_slots else 32768)
-        allocations = build_stage_allocations(
-            task_type=task_type,
-            difficulty=difficulty,
-            estimated_tokens=estimated_tokens,
-            token_limit=primary_limit,
-            telemetry=telemetry,
-        )
-        payload = {
-            "task_type": task_type,
-            "difficulty": difficulty,
-            "estimated_tokens": estimated_tokens,
-            "allocations": {role: allocation.__dict__ for role, allocation in allocations.items()},
-            "capacity": {
-                "gemini": summarize_capacity(gemini_slots),
-                "cerebras": summarize_capacity(cerebras_slots),
-            },
-        }
+        payload = _classify({"task": task, "cwd": args.cwd})
         if args.json:
             sys.stdout.write(json.dumps(payload, ensure_ascii=False, indent=2))
             sys.stdout.write("\n")

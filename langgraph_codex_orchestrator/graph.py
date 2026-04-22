@@ -56,7 +56,33 @@ def _preferred_model_for_role(role: str, runtime: CodexWorkerRuntime, state: Orc
     if role in {"finder", "reader", "summarizer"} and task_type in {"repo_search", "general"}:
         if "llama3.1-8b" in available:
             return "llama3.1-8b"
+    if role in {"finder", "reader", "summarizer"} and task_type == "ui_design":
+        if "llama3.1-8b" in available:
+            return "llama3.1-8b"
     return pick_default_model(runtime.slot)
+
+
+def _token_limit_for_role(role: str, task_type: str) -> int:
+    cerebras_slots = list_provider_slots("cerebras")
+    if not cerebras_slots:
+        return 32768
+    models = set(cerebras_slots[0].models)
+    if role in {"finder", "reader", "summarizer"} and "llama3.1-8b" in models:
+        return 8192
+    if role in {"implementer", "verifier"} and "qwen-3-235b-a22b-instruct-2507" in models:
+        return 32768
+    return cerebras_slots[0].token_limit
+
+
+def _boost_search_workers(role: str, task_type: str, difficulty: int, workers: int) -> int:
+    if role not in {"finder", "reader", "summarizer"}:
+        return workers
+    if task_type in {"repo_search", "ui_design"}:
+        if difficulty >= 4:
+            return 20
+        if difficulty >= 2:
+            return max(workers, 12)
+    return workers
 
 
 def _run_parallel_role(
@@ -126,14 +152,23 @@ def _classify(state: OrchestratorState) -> OrchestratorState:
     estimated_tokens = estimate_tokens(task)
     gemini_slots = list_provider_slots("gemini")
     cerebras_slots = list_provider_slots("cerebras")
-    primary_limit = gemini_slots[0].token_limit if gemini_slots else (cerebras_slots[0].token_limit if cerebras_slots else 32768)
-    allocations = build_stage_allocations(
-        task_type=task_type,
-        difficulty=difficulty,
-        estimated_tokens=estimated_tokens,
-        token_limit=primary_limit,
-        telemetry=telemetry,
-    )
+    allocations: Dict[str, StageAllocation] = {}
+    for role in ROLE_NAMES:
+        role_alloc = build_stage_allocations(
+            task_type=task_type,
+            difficulty=difficulty,
+            estimated_tokens=estimated_tokens,
+            token_limit=_token_limit_for_role(role, task_type),
+            telemetry=telemetry,
+        )[role]
+        boosted_workers = _boost_search_workers(role, task_type, difficulty, role_alloc.workers)
+        allocations[role] = StageAllocation(
+            role=role,
+            workers=boosted_workers,
+            estimated_tokens=role_alloc.estimated_tokens,
+            token_limit=role_alloc.token_limit,
+            overload_ratio=role_alloc.overload_ratio,
+        )
     return {
         **state,
         "task_type": task_type,
