@@ -1,0 +1,23 @@
+model:
+  provider: custom:cerebras-api-101
+  default: qwen-3-235b-a22b-instruct-2507
+providers: {}
+custom_providers:
+- name: Cerebras API 101
+  base_url: https://api.cerebras.ai/v1
+  key_env: CEREBRAS_API_KEY_101
+  model: qwen-3-235b-a22b-instruct-2507
+  api_mode: chat_completions
+  provider_key: codex-cerebras-cli
+- name: Cerebras API 102
+  base_url: https://api.cerebras.ai/v1
+  key_env: CEREBRAS_API_KEY_102
+  model: qwen-3-235b-a22b-instruct-2507
+  api_mode: chat_completions
+  provider_key: codex-cerebras-cli
+- name: Cerebras API 103
+  base_url: https://api.cerebras.ai/v1
+  key_env: CEREBRAS_API_KEY_103
+  model: qwen-3-235b-a22b-instruct-2507
+  api_mode: chat_completions
+  provider_key: codex-cerebras-cli

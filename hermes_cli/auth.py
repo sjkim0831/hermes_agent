@@ -71,6 +71,7 @@ DEFAULT_QWEN_BASE_URL = "https://portal.qwen.ai/v1"
 DEFAULT_GITHUB_MODELS_BASE_URL = "https://api.githubcopilot.com"
 DEFAULT_COPILOT_ACP_BASE_URL = "acp://copilot"
 DEFAULT_OLLAMA_CLOUD_BASE_URL = "https://ollama.com/v1"
+DEFAULT_CODEX_CEREBRAS_CLI_BASE_URL = "codex+cerebras://local"
 CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CODEX_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
 CODEX_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 120
@@ -146,6 +147,13 @@ PROVIDER_REGISTRY: Dict[str, ProviderConfig] = {
         auth_type="external_process",
         inference_base_url=DEFAULT_COPILOT_ACP_BASE_URL,
         base_url_env_var="COPILOT_ACP_BASE_URL",
+    ),
+    "codex-cerebras-cli": ProviderConfig(
+        id="codex-cerebras-cli",
+        name="Codex Cerebras CLI",
+        auth_type="external_process",
+        inference_base_url=DEFAULT_CODEX_CEREBRAS_CLI_BASE_URL,
+        base_url_env_var="HERMES_CODEX_CEREBRAS_BASE_URL",
     ),
     "gemini": ProviderConfig(
         id="gemini",
@@ -224,6 +232,30 @@ PROVIDER_REGISTRY: Dict[str, ProviderConfig] = {
         inference_base_url="https://api.deepseek.com/v1",
         api_key_env_vars=("DEEPSEEK_API_KEY",),
         base_url_env_var="DEEPSEEK_BASE_URL",
+    ),
+    "groq": ProviderConfig(
+        id="groq",
+        name="Groq",
+        auth_type="api_key",
+        inference_base_url="https://api.groq.com/openai/v1",
+        api_key_env_vars=("GROQ_API_KEY",),
+        base_url_env_var="GROQ_BASE_URL",
+    ),
+    "fireworks": ProviderConfig(
+        id="fireworks",
+        name="Fireworks AI",
+        auth_type="api_key",
+        inference_base_url="https://api.fireworks.ai/inference/v1",
+        api_key_env_vars=("FIREWORKS_API_KEY",),
+        base_url_env_var="FIREWORKS_BASE_URL",
+    ),
+    "cerebras": ProviderConfig(
+        id="cerebras",
+        name="Cerebras",
+        auth_type="api_key",
+        inference_base_url="https://api.cerebras.ai/v1",
+        api_key_env_vars=("CEREBRAS_API_KEY",),
+        base_url_env_var="CEREBRAS_BASE_URL",
     ),
     "xai": ProviderConfig(
         id="xai",
@@ -402,6 +434,25 @@ def _resolve_api_key_provider_secret(
         except Exception:
             pass
         return "", ""
+
+    try:
+        from agent.credential_pool import load_pool
+
+        pool = load_pool(provider_id)
+        if pool and pool.has_credentials():
+            entry = pool.select()
+            if entry is not None:
+                token = str(
+                    getattr(entry, "runtime_api_key", None)
+                    or getattr(entry, "access_token", "")
+                    or ""
+                ).strip()
+                if has_usable_secret(token):
+                    label = str(getattr(entry, "label", "") or "").strip()
+                    source = f"pool:{label}" if label else str(getattr(entry, "source", "") or "pool")
+                    return token, source
+    except Exception:
+        pass
 
     for env_var in pconfig.api_key_env_vars:
         val = os.getenv(env_var, "").strip()
@@ -969,6 +1020,7 @@ def resolve_provider(
         "glm": "zai", "z-ai": "zai", "z.ai": "zai", "zhipu": "zai",
         "google": "gemini", "google-gemini": "gemini", "google-ai-studio": "gemini",
         "x-ai": "xai", "x.ai": "xai", "grok": "xai",
+        "groq-cloud": "groq", "fireworks-ai": "fireworks", "cerebras-ai": "cerebras",
         "kimi": "kimi-coding", "kimi-for-coding": "kimi-coding", "moonshot": "kimi-coding",
         "kimi-cn": "kimi-coding-cn", "moonshot-cn": "kimi-coding-cn",
         "arcee-ai": "arcee", "arceeai": "arcee",
@@ -2547,13 +2599,20 @@ def get_external_process_provider_status(provider_id: str) -> Dict[str, Any]:
     if not pconfig or pconfig.auth_type != "external_process":
         return {"configured": False}
 
-    command = (
-        os.getenv("HERMES_COPILOT_ACP_COMMAND", "").strip()
-        or os.getenv("COPILOT_CLI_PATH", "").strip()
-        or "copilot"
-    )
-    raw_args = os.getenv("HERMES_COPILOT_ACP_ARGS", "").strip()
-    args = shlex.split(raw_args) if raw_args else ["--acp", "--stdio"]
+    if provider_id == "copilot-acp":
+        command = (
+            os.getenv("HERMES_COPILOT_ACP_COMMAND", "").strip()
+            or os.getenv("COPILOT_CLI_PATH", "").strip()
+            or "copilot"
+        )
+        raw_args = os.getenv("HERMES_COPILOT_ACP_ARGS", "").strip()
+        args = shlex.split(raw_args) if raw_args else ["--acp", "--stdio"]
+    elif provider_id == "codex-cerebras-cli":
+        command = os.getenv("HERMES_CODEX_CEREBRAS_COMMAND", "").strip() or "codex-cerebras"
+        raw_args = os.getenv("HERMES_CODEX_CEREBRAS_ARGS", "").strip()
+        args = shlex.split(raw_args) if raw_args else []
+    else:
+        return {"configured": False}
     base_url = os.getenv(pconfig.base_url_env_var, "").strip() if pconfig.base_url_env_var else ""
     if not base_url:
         base_url = pconfig.inference_base_url
@@ -2582,7 +2641,7 @@ def get_auth_status(provider_id: Optional[str] = None) -> Dict[str, Any]:
         return get_qwen_auth_status()
     if target == "google-gemini-cli":
         return get_gemini_oauth_auth_status()
-    if target == "copilot-acp":
+    if target in {"copilot-acp", "codex-cerebras-cli"}:
         return get_external_process_provider_status(target)
     # API-key providers
     pconfig = PROVIDER_REGISTRY.get(target)
@@ -2650,25 +2709,44 @@ def resolve_external_process_provider_credentials(provider_id: str) -> Dict[str,
     if not base_url:
         base_url = pconfig.inference_base_url
 
-    command = (
-        os.getenv("HERMES_COPILOT_ACP_COMMAND", "").strip()
-        or os.getenv("COPILOT_CLI_PATH", "").strip()
-        or "copilot"
-    )
-    raw_args = os.getenv("HERMES_COPILOT_ACP_ARGS", "").strip()
-    args = shlex.split(raw_args) if raw_args else ["--acp", "--stdio"]
-    resolved_command = shutil.which(command) if command else None
-    if not resolved_command and not base_url.startswith("acp+tcp://"):
-        raise AuthError(
-            f"Could not find the Copilot CLI command '{command}'. "
-            "Install GitHub Copilot CLI or set HERMES_COPILOT_ACP_COMMAND/COPILOT_CLI_PATH.",
-            provider=provider_id,
-            code="missing_copilot_cli",
+    if provider_id == "copilot-acp":
+        command = (
+            os.getenv("HERMES_COPILOT_ACP_COMMAND", "").strip()
+            or os.getenv("COPILOT_CLI_PATH", "").strip()
+            or "copilot"
         )
+        raw_args = os.getenv("HERMES_COPILOT_ACP_ARGS", "").strip()
+        args = shlex.split(raw_args) if raw_args else ["--acp", "--stdio"]
+    elif provider_id == "codex-cerebras-cli":
+        command = os.getenv("HERMES_CODEX_CEREBRAS_COMMAND", "").strip() or "codex-cerebras"
+        raw_args = os.getenv("HERMES_CODEX_CEREBRAS_ARGS", "").strip()
+        args = shlex.split(raw_args) if raw_args else []
+    else:
+        raise AuthError(
+            f"Provider '{provider_id}' is not a supported external-process provider.",
+            provider=provider_id,
+            code="invalid_provider",
+        )
+    resolved_command = shutil.which(command) if command else None
+    if not resolved_command:
+        if provider_id == "copilot-acp" and not base_url.startswith("acp+tcp://"):
+            raise AuthError(
+                f"Could not find the Copilot CLI command '{command}'. "
+                "Install GitHub Copilot CLI or set HERMES_COPILOT_ACP_COMMAND/COPILOT_CLI_PATH.",
+                provider=provider_id,
+                code="missing_copilot_cli",
+            )
+        if provider_id == "codex-cerebras-cli":
+            raise AuthError(
+                f"Could not find the Codex Cerebras command '{command}'. "
+                "Install codex-cerebras or set HERMES_CODEX_CEREBRAS_COMMAND.",
+                provider=provider_id,
+                code="missing_codex_cerebras_cli",
+            )
 
     return {
         "provider": provider_id,
-        "api_key": "copilot-acp",
+        "api_key": "copilot-acp" if provider_id == "copilot-acp" else "codex-cerebras-cli",
         "base_url": base_url.rstrip("/"),
         "command": resolved_command or command,
         "args": args,

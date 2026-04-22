@@ -1865,7 +1865,7 @@ def _normalize_custom_provider_entry(
         "base_url": base_url,
     }
 
-    provider_key = provider_key.strip()
+    provider_key = provider_key.strip() or str(entry.get("provider_key", "") or "").strip()
     if provider_key:
         normalized["provider_key"] = provider_key
 
@@ -1935,18 +1935,19 @@ def get_compatible_custom_providers(
         if entry is None:
             return
         provider_key = str(entry.get("provider_key", "") or "").strip().lower()
+        provider_key_is_shared_backend = provider_key in {"codex-cerebras-cli"}
         name = str(entry.get("name", "") or "").strip().lower()
         base_url = str(entry.get("base_url", "") or "").strip().rstrip("/").lower()
         model = str(entry.get("model", "") or "").strip().lower()
         pair = (name, base_url, model)
 
-        if provider_key and provider_key in seen_provider_keys:
+        if provider_key and not provider_key_is_shared_backend and provider_key in seen_provider_keys:
             return
         if name and base_url and pair in seen_name_url_pairs:
             return
 
         compatible.append(entry)
-        if provider_key:
+        if provider_key and not provider_key_is_shared_backend:
             seen_provider_keys.add(provider_key)
         if name and base_url:
             seen_name_url_pairs.add(pair)

@@ -14,6 +14,7 @@ from agent.credential_pool import CredentialPool, PooledCredential, get_custom_p
 from hermes_cli.auth import (
     AuthError,
     DEFAULT_CODEX_BASE_URL,
+    DEFAULT_CODEX_CEREBRAS_CLI_BASE_URL,
     DEFAULT_QWEN_BASE_URL,
     PROVIDER_REGISTRY,
     _agent_key_is_usable,
@@ -309,6 +310,7 @@ def _get_named_custom_provider(requested_provider: str) -> Optional[Dict[str, An
                         "base_url": base_url.strip(),
                         "api_key": resolved_api_key,
                         "model": entry.get("default_model", ""),
+                        "provider_key": ep_name,
                     }
             # Also check the 'name' field if present
             display_name = entry.get("name", "")
@@ -323,6 +325,7 @@ def _get_named_custom_provider(requested_provider: str) -> Optional[Dict[str, An
                             "base_url": base_url.strip(),
                             "api_key": resolved_api_key,
                             "model": entry.get("default_model", ""),
+                            "provider_key": ep_name,
                         }
 
     # Fall back to custom_providers: list (legacy format)
@@ -391,15 +394,7 @@ def _resolve_named_custom_runtime(
     if not base_url:
         return None
 
-    # Check if a credential pool exists for this custom endpoint
-    pool_result = _try_resolve_from_custom_pool(base_url, "custom", custom_provider.get("api_mode"))
-    if pool_result:
-        # Propagate the model name even when using pooled credentials —
-        # the pool doesn't know about the custom_providers model field.
-        model_name = custom_provider.get("model")
-        if model_name:
-            pool_result["model"] = model_name
-        return pool_result
+    provider_key = str(custom_provider.get("provider_key", "") or "").strip()
 
     api_key_candidates = [
         (explicit_api_key or "").strip(),
@@ -409,6 +404,32 @@ def _resolve_named_custom_runtime(
         os.getenv("OPENROUTER_API_KEY", "").strip(),
     ]
     api_key = next((candidate for candidate in api_key_candidates if has_usable_secret(candidate)), "")
+
+    if provider_key == "codex-cerebras-cli":
+        process_creds = resolve_external_process_provider_credentials(provider_key)
+        result = {
+            "provider": provider_key,
+            "api_mode": "chat_completions",
+            "base_url": process_creds.get("base_url", DEFAULT_CODEX_CEREBRAS_CLI_BASE_URL).rstrip("/"),
+            "api_key": api_key or "no-key-required",
+            "command": process_creds.get("command", ""),
+            "args": list(process_creds.get("args") or []),
+            "source": f"custom_provider:{custom_provider.get('name', requested_provider)}",
+        }
+        model_name = custom_provider.get("model")
+        if model_name:
+            result["model"] = model_name
+        return result
+
+    # Check if a credential pool exists for this custom endpoint
+    pool_result = _try_resolve_from_custom_pool(base_url, "custom", custom_provider.get("api_mode"))
+    if pool_result:
+        # Propagate the model name even when using pooled credentials —
+        # the pool doesn't know about the custom_providers model field.
+        model_name = custom_provider.get("model")
+        if model_name:
+            pool_result["model"] = model_name
+        return pool_result
 
     result = {
         "provider": "custom",

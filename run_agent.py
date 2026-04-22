@@ -2143,6 +2143,10 @@ class AIAgent:
         """Return True when the base URL targets OpenRouter."""
         return "openrouter" in self._base_url_lower
 
+    def _is_cerebras_url(self) -> bool:
+        """Return True when the base URL targets Cerebras."""
+        return "api.cerebras.ai" in self._base_url_lower
+
     @staticmethod
     def _model_requires_responses_api(model: str) -> bool:
         """Return True for models that require the Responses API path.
@@ -4753,6 +4757,21 @@ class AIAgent:
                 self._client_log_context(),
             )
             return client
+        if self.provider == "codex-cerebras-cli" or str(client_kwargs.get("base_url", "")).startswith("codex+cerebras://"):
+            from agent.codex_cerebras_cli_client import CodexCerebrasCLIClient
+
+            safe_kwargs = {
+                k: v for k, v in client_kwargs.items()
+                if k in {"api_key", "base_url", "command", "args"}
+            }
+            client = CodexCerebrasCLIClient(**safe_kwargs)
+            logger.info(
+                "Codex Cerebras CLI client created (%s, shared=%s) %s",
+                reason,
+                shared,
+                self._client_log_context(),
+            )
+            return client
         if self.provider == "google-gemini-cli" or str(client_kwargs.get("base_url", "")).startswith("cloudcode-pa://"):
             from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
 
@@ -7176,6 +7195,11 @@ class AIAgent:
             fixed_temperature = _fixed_temperature_for_model(self.model)
             if fixed_temperature is not None:
                 api_kwargs["temperature"] = fixed_temperature
+        if self._is_cerebras_url():
+            # Cerebras' Qwen path is tuned for moderate sampling by default.
+            # Set practical defaults when the caller did not specify them.
+            api_kwargs.setdefault("temperature", 0.7)
+            api_kwargs.setdefault("top_p", 0.8)
         if self._is_qwen_portal():
             api_kwargs["metadata"] = {
                 "sessionId": self.session_id or "hermes",
@@ -7193,6 +7217,10 @@ class AIAgent:
             api_kwargs.update(self._max_tokens_param(_ephemeral_out))
         elif self.max_tokens is not None:
             api_kwargs.update(self._max_tokens_param(self.max_tokens))
+        elif self._is_cerebras_url():
+            # Cerebras can stream very large outputs, but a smaller default cap
+            # improves first-token latency for normal chat turns.
+            api_kwargs.update(self._max_tokens_param(4096))
         elif "integrate.api.nvidia.com" in self._base_url_lower:
             # NVIDIA NIM defaults to a very low max_tokens when omitted,
             # causing models like GLM-4.7 to truncate immediately (thinking

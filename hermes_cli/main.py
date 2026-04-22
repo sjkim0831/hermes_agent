@@ -990,6 +990,14 @@ def _launch_tui(resume_session_id: Optional[str] = None, tui_dev: bool = False):
     )
     env.setdefault("HERMES_PYTHON", sys.executable)
     env.setdefault("HERMES_CWD", os.getcwd())
+    # The TUI is a long-lived Node process. On larger repos or long sessions,
+    # the default V8 heap ceiling can be too small and crash with
+    # "JavaScript heap out of memory". Use a larger default while still
+    # respecting an explicit max-old-space-size already present in NODE_OPTIONS.
+    heap_mb = (env.get("HERMES_TUI_HEAP_MB") or "8192").strip() or "8192"
+    node_options = (env.get("NODE_OPTIONS") or "").strip()
+    if "--max-old-space-size=" not in node_options:
+        env["NODE_OPTIONS"] = f"--max-old-space-size={heap_mb} {node_options}".strip()
     if resume_session_id:
         env["HERMES_TUI_RESUME"] = resume_session_id
 
@@ -1427,7 +1435,7 @@ def select_provider_and_model(args=None):
                 continue
             key = "custom:" + name.lower().replace(" ", "-")
             provider_key = (entry.get("provider_key") or "").strip()
-            if provider_key:
+            if provider_key and provider_key != "codex-cerebras-cli":
                 try:
                     resolve_provider(provider_key)
                 except AuthError:
@@ -2805,9 +2813,9 @@ def _model_flow_named_custom(config, provider_info):
     model = cfg.get("model")
     if not isinstance(model, dict):
         model = {"default": model} if model else {}
-        cfg["model"] = model
+    cfg["model"] = model
     if provider_key:
-        model["provider"] = provider_key
+        model["provider"] = key if provider_key == "codex-cerebras-cli" else provider_key
         model.pop("base_url", None)
         model.pop("api_key", None)
     else:
@@ -3645,6 +3653,7 @@ def _model_flow_api_key_provider(config, provider_id, current_model=""):
         _prompt_model_selection,
         _save_model_choice,
         deactivate_provider,
+        resolve_api_key_provider_credentials,
     )
     from hermes_cli.config import (
         get_env_value,
@@ -3662,12 +3671,12 @@ def _model_flow_api_key_provider(config, provider_id, current_model=""):
     key_env = pconfig.api_key_env_vars[0] if pconfig.api_key_env_vars else ""
     base_url_env = pconfig.base_url_env_var or ""
 
-    # Check / prompt for API key
-    existing_key = ""
-    for ev in pconfig.api_key_env_vars:
-        existing_key = get_env_value(ev) or os.getenv(ev, "")
-        if existing_key:
-            break
+    # Check / prompt for API key.  API-key providers now honor the
+    # credential pool, so switching providers can reuse the selected
+    # primary credential without re-prompting for Gemini/Cerebras/etc.
+    creds = resolve_api_key_provider_credentials(provider_id)
+    existing_key = str(creds.get("api_key", "") or "")
+    key_source = str(creds.get("source", "") or "")
 
     if not existing_key:
         print(f"No {pconfig.name} API key configured.")
@@ -3685,15 +3694,20 @@ def _model_flow_api_key_provider(config, provider_id, current_model=""):
             save_env_value(key_env, new_key)
             print("API key saved.")
             print()
+            creds = resolve_api_key_provider_credentials(provider_id)
+            existing_key = str(creds.get("api_key", "") or "")
+            key_source = str(creds.get("source", "") or "")
     else:
         print(f"  {pconfig.name} API key: {existing_key[:8]}... ✓")
+        if key_source.startswith("pool:"):
+            print(f"  Source: {key_source}")
         print()
 
     # Optional base URL override
     current_base = ""
     if base_url_env:
         current_base = get_env_value(base_url_env) or os.getenv(base_url_env, "")
-    effective_base = current_base or pconfig.inference_base_url
+    effective_base = current_base or str(creds.get("base_url", "") or "") or pconfig.inference_base_url
 
     try:
         override = input(f"Base URL [{effective_base}]: ").strip()
@@ -6839,6 +6853,13 @@ For more help on a command:
     )
     auth_remove.add_argument("provider", help="Provider id")
     auth_remove.add_argument(
+        "target", help="Credential index, entry id, or exact label"
+    )
+    auth_select = auth_subparsers.add_parser(
+        "select", help="Select the primary pooled credential for a provider"
+    )
+    auth_select.add_argument("provider", help="Provider id")
+    auth_select.add_argument(
         "target", help="Credential index, entry id, or exact label"
     )
     auth_reset = auth_subparsers.add_parser(
