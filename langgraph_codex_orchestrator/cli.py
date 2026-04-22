@@ -69,3 +69,7 @@ def main(argv: list[str] | None = None) -> int:
     sys.stdout.write(str(state.get("final_response") or "").strip())
     sys.stdout.write("\n")
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
