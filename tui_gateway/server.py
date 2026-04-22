@@ -387,6 +387,14 @@ def _resolve_model() -> str:
     env = os.environ.get("HERMES_MODEL", "")
     if env:
         return env
+    try:
+        from hermes_cli.runtime_provider import resolve_runtime_provider
+
+        runtime_model = str(resolve_runtime_provider(requested=None).get("model") or "").strip()
+        if runtime_model:
+            return runtime_model
+    except Exception:
+        pass
     m = _load_cfg().get("model", "")
     if isinstance(m, dict):
         return m.get("default", "")
@@ -976,12 +984,25 @@ def _reset_session_agent(sid: str, session: dict) -> dict:
 
 def _make_agent(sid: str, key: str, session_id: str | None = None):
     from run_agent import AIAgent
+    from hermes_cli.runtime_provider import resolve_runtime_provider
+
     cfg = _load_cfg()
+    runtime = {}
+    try:
+        runtime = resolve_runtime_provider(requested=None)
+    except Exception:
+        runtime = {}
     system_prompt = cfg.get("agent", {}).get("system_prompt", "") or ""
     if not system_prompt:
         system_prompt = _resolve_personality_prompt(cfg)
     return AIAgent(
-        model=_resolve_model(),
+        model=str(runtime.get("model") or _resolve_model()),
+        provider=str(runtime.get("provider") or ""),
+        base_url=str(runtime.get("base_url") or "") or None,
+        api_key=str(runtime.get("api_key") or "") or None,
+        api_mode=str(runtime.get("api_mode") or "") or None,
+        command=str(runtime.get("command") or "") or None,
+        args=list(runtime.get("args") or []),
         quiet_mode=True,
         verbose_logging=_load_tool_progress_mode() == "verbose",
         reasoning_config=_load_reasoning_config(),
