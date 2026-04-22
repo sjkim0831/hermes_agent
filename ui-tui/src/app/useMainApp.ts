@@ -449,9 +449,8 @@ export function useMainApp(gw: GatewayClient) {
 
     const exitHandler = (code?: number | null) => {
       if (code === 0) {
-        patchUiState({ busy: false, sid: null, status: 'gateway restarted' })
-        turnController.pushActivity('gateway restarted after config change', 'info')
-        gw.start()
+        patchUiState({ busy: false, status: 'ready' })
+        turnController.pushActivity('gateway closed cleanly', 'info', 'gateway-clean-exit')
         return
       }
 
