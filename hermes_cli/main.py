@@ -2727,8 +2727,25 @@ def _model_flow_named_custom(config, provider_info):
     api_key = provider_info.get("api_key", "")
     key_env = provider_info.get("key_env", "")
     saved_model = provider_info.get("model", "")
+    saved_models = []
+    raw_saved_models = provider_info.get("models", {})
+    if isinstance(raw_saved_models, dict):
+        for model_name in raw_saved_models:
+            model_name = str(model_name or "").strip()
+            if model_name and model_name not in saved_models:
+                saved_models.append(model_name)
+    elif isinstance(raw_saved_models, list):
+        for model_name in raw_saved_models:
+            model_name = str(model_name or "").strip()
+            if model_name and model_name not in saved_models:
+                saved_models.append(model_name)
+    saved_model = str(saved_model or "").strip()
+    if saved_model and saved_model not in saved_models:
+        saved_models.insert(0, saved_model)
     provider_key = (provider_info.get("provider_key") or "").strip()
     selected_custom_slug = "custom:" + name.lower().replace(" ", "-")
+    if not api_key and key_env:
+        api_key = os.getenv(key_env, "").strip()
 
     print(f"  Provider: {name}")
     print(f"  URL:      {base_url}")
@@ -2738,6 +2755,8 @@ def _model_flow_named_custom(config, provider_info):
 
     print("Fetching available models...")
     models = fetch_api_models(api_key, base_url, timeout=8.0)
+    if not models and saved_models:
+        models = list(saved_models)
 
     if models:
         default_idx = 0
