@@ -6,13 +6,17 @@ from dataclasses import dataclass
 import os
 from typing import Any, Dict, Iterable, List, Optional
 
+from dotenv import load_dotenv
 from hermes_cli.config import custom_provider_model_ids, get_compatible_custom_providers, load_config
 
 ROLE_NAMES = ("finder", "reader", "summarizer", "implementer", "verifier")
 DEFAULT_ROLE_BASELINE = 4
 MAX_STAGE_WORKERS = 20
 DEFAULT_CEREBRAS_DAILY_TOKEN_BUDGET = 900_000
-DEFAULT_GEMINI_DAILY_REQUEST_BUDGET = int(os.environ.get("HERMES_GEMINI_DAILY_REQUEST_BUDGET", "0") or "0")
+DEFAULT_GEMINI_DAILY_REQUEST_BUDGET = int(os.environ.get("HERMES_GEMINI_DAILY_REQUEST_BUDGET", "500") or "500")
+
+_HERMES_ENV_PATH = os.path.expanduser("~/.hermes/.env")
+load_dotenv(_HERMES_ENV_PATH, override=False)
 
 MODEL_TOKEN_LIMITS = {
     "gemini-2.5-flash": 1_000_000,

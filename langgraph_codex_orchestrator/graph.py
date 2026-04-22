@@ -34,6 +34,7 @@ class OrchestratorState(TypedDict, total=False):
     final_response: str
     telemetry_summary: Dict[str, Any]
     stage_tasks: Dict[str, List[str]]
+    fast_path: bool
 
 
 @dataclass(frozen=True)
@@ -161,6 +162,22 @@ def _boost_search_workers(role: str, task_type: str, difficulty: int, workers: i
     return workers
 
 
+def _dispatch_worker_count(role: str, task_type: str, difficulty: int, workers: int) -> int:
+    if task_type == "general":
+        return min(workers, 2 if difficulty <= 1 else 4)
+    if role in {"finder", "reader", "summarizer"}:
+        return min(workers, max(4, min(8, difficulty * 2 + 2)))
+    if role == "implementer":
+        return min(workers, max(2, min(4, difficulty + 1)))
+    if role == "verifier":
+        return min(workers, max(1, min(3, difficulty + 1)))
+    return min(workers, 4)
+
+
+def _is_fast_path(task_type: str, difficulty: int, estimated_tokens: int) -> bool:
+    return task_type == "general" and difficulty <= 1 and estimated_tokens <= 64
+
+
 def _run_parallel_role(
     role: str,
     state: OrchestratorState,
@@ -170,12 +187,13 @@ def _run_parallel_role(
     task = state["task"]
     cwd = state.get("cwd") or None
     telemetry = TelemetryStore()
+    dispatch_workers = _dispatch_worker_count(role, str(state.get("task_type") or "general"), int(state.get("difficulty") or 1), allocation.workers)
     stage_tasks = [
         StageTask(role=role, shard_index=index + 1, shard_count=allocation.workers, instruction=item)
         for index, item in enumerate((state.get("stage_tasks") or {}).get(role, []))
-    ]
+    ][:dispatch_workers]
     if not stage_tasks:
-        stage_tasks = _decompose_stage_tasks(state, role, allocation.workers)
+        stage_tasks = _decompose_stage_tasks(state, role, allocation.workers)[:dispatch_workers]
     prompt_base = (
         f"You are the {role} stage in a LangGraph Codex orchestration.\n"
         f"Task type: {state['task_type']}\n"
@@ -215,7 +233,7 @@ def _run_parallel_role(
                 error=f"No runtimes configured for role {role}.",
             )
         ]
-    with ThreadPoolExecutor(max_workers=allocation.workers) as executor:
+    with ThreadPoolExecutor(max_workers=max(1, dispatch_workers)) as executor:
         future_map = {}
         for stage_task in stage_tasks:
             ranked_runtimes = sorted(
@@ -265,6 +283,28 @@ def _run_parallel_role(
     return results
 
 
+def _fast_execute(state: OrchestratorState) -> OrchestratorState:
+    prompt = (
+        "You are the fast-path execution backend for a trivial LangGraph orchestration.\n"
+        "Answer the user's request directly and concisely.\n\n"
+        f"User task:\n{state['task']}"
+    )
+    gemini_runtimes = build_family_runtimes(list_provider_slots("gemini"), "gemini")
+    cerebras_runtimes = build_family_runtimes(list_provider_slots("cerebras"), "cerebras")
+    result: RuntimeResult | None = None
+    for runtime in gemini_runtimes:
+        result = runtime.run_fast_prompt(prompt, model=pick_default_model(runtime.slot), timeout_seconds=45.0)
+        if result.ok:
+            break
+    if result is None or not result.ok:
+        for runtime in cerebras_runtimes:
+            result = runtime.run_fast_prompt(prompt, model=pick_default_model(runtime.slot), timeout_seconds=45.0)
+            if result.ok:
+                break
+    final = result.text if result and result.ok else (result.error if result else "fast-path execution failed")
+    return {**state, "final_response": final}
+
+
 def _classify(state: OrchestratorState) -> OrchestratorState:
     telemetry = TelemetryStore()
     task = state["task"]
@@ -305,6 +345,7 @@ def _classify(state: OrchestratorState) -> OrchestratorState:
             "cerebras": summarize_capacity(cerebras_slots),
         },
         "stage_tasks": stage_tasks,
+        "fast_path": _is_fast_path(task_type, difficulty, estimated_tokens),
     }
 
 
@@ -389,6 +430,7 @@ def build_graph():
 
     graph = StateGraph(OrchestratorState)
     graph.add_node("classify", _classify)
+    graph.add_node("fast_execute", _fast_execute)
     graph.add_node("supervisor", _supervisor_plan)
     graph.add_node("finder", _stage_node("finder", "cerebras"))
     graph.add_node("reader", _stage_node("reader", "cerebras"))
@@ -397,7 +439,12 @@ def build_graph():
     graph.add_node("verifier", _stage_node("verifier", "cerebras"))
     graph.add_node("finalize", _finalize)
     graph.set_entry_point("classify")
-    graph.add_edge("classify", "supervisor")
+    graph.add_conditional_edges(
+        "classify",
+        lambda state: "fast_execute" if state.get("fast_path") else "supervisor",
+        {"fast_execute": "fast_execute", "supervisor": "supervisor"},
+    )
+    graph.add_edge("fast_execute", END)
     graph.add_edge("supervisor", "finder")
     graph.add_edge("finder", "reader")
     graph.add_edge("reader", "summarizer")

@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional
 
 from agent.credential_pool import CredentialPool, STATUS_EXHAUSTED, load_pool
+from openai import OpenAI
 
 from .config import ProviderSlot
 from .quota import QuotaStore
@@ -38,6 +39,16 @@ class RuntimeResult:
     budget_blocked: bool = False
 
 
+@dataclass(frozen=True)
+class EnvCredential:
+    id: str
+    label: str
+    runtime_api_key: str
+    last_status: Optional[str] = None
+    last_status_at: Optional[float] = None
+    last_error_reset_at: Optional[float] = None
+
+
 class CodexWorkerRuntime:
     def __init__(self, slot: ProviderSlot, *, command: str, env_key: str) -> None:
         self.slot = slot
@@ -61,7 +72,12 @@ class CodexWorkerRuntime:
 
     def _choose_entry(self, estimated_tokens: int):
         candidates = []
-        for entry in self.pool.entries():
+        entries = list(self.pool.entries())
+        if not entries and self.slot.key_env:
+            raw = os.environ.get(self.slot.key_env, "").strip()
+            if raw:
+                entries = [EnvCredential(id=f"env:{self.slot.key_env}", label=self.slot.name, runtime_api_key=raw)]
+        for entry in entries:
             if not self._entry_available(entry):
                 continue
             decision = self.quota.can_allocate(
@@ -94,6 +110,87 @@ class CodexWorkerRuntime:
         )
         return candidates[0]
 
+    def run_fast_prompt(
+        self,
+        prompt: str,
+        *,
+        model: Optional[str] = None,
+        timeout_seconds: float = 120.0,
+    ) -> RuntimeResult:
+        prompt_tokens = estimate_tokens(prompt)
+        picked = self._choose_entry(prompt_tokens)
+        if not picked or not picked[0]:
+            return RuntimeResult(
+                ok=False,
+                text="",
+                provider_id=self.slot.provider_id,
+                model=model or self.slot.model,
+                duration_seconds=0.0,
+                attempts=1,
+                error="All credentials are blocked by quota budget or cooldown.",
+                budget_blocked=True,
+            )
+        entry, _decision = picked
+        started = time.time()
+        try:
+            client = OpenAI(
+                api_key=entry.runtime_api_key,
+                base_url=self.slot.base_url,
+                timeout=timeout_seconds,
+            )
+            response = client.chat.completions.create(
+                model=model or self.slot.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+            )
+            text = ((response.choices[0].message.content or "") if response.choices else "").strip()
+            duration = time.time() - started
+            completion_tokens = estimate_tokens(text)
+            total_tokens = prompt_tokens + completion_tokens
+            self.quota.record_usage(
+                provider_family=self.slot.provider_family,
+                provider_id=self.slot.provider_id,
+                credential_label=entry.label,
+                token_count=total_tokens if self.slot.provider_family == "cerebras" else 0,
+                request_count=1,
+            )
+            return RuntimeResult(
+                ok=True,
+                text=text,
+                provider_id=self.slot.provider_id,
+                model=model or self.slot.model,
+                duration_seconds=duration,
+                attempts=1,
+                credential_label=entry.label,
+                tokens_used=total_tokens,
+                request_count=1,
+            )
+        except Exception as exc:
+            detail = str(exc).strip()
+            duration = time.time() - started
+            self.quota.record_usage(
+                provider_family=self.slot.provider_family,
+                provider_id=self.slot.provider_id,
+                credential_label=entry.label,
+                token_count=prompt_tokens if self.slot.provider_family == "cerebras" else 0,
+                request_count=1,
+            )
+            if _is_rate_limited(detail):
+                self.pool.mark_exhausted_and_rotate(status_code=429, error_context={"message": detail})
+            return RuntimeResult(
+                ok=False,
+                text="",
+                provider_id=self.slot.provider_id,
+                model=model or self.slot.model,
+                duration_seconds=duration,
+                attempts=1,
+                credential_label=entry.label,
+                error=detail,
+                rate_limited=_is_rate_limited(detail),
+                tokens_used=prompt_tokens,
+                request_count=1,
+            )
+
     def run_prompt(
         self,
         prompt: str,
@@ -122,9 +219,11 @@ class CodexWorkerRuntime:
                     budget_blocked=True,
                 )
             entry, _decision = picked
-            lease_id = self.pool.acquire_lease(getattr(entry, "id", None))
-            entry = self.pool.current()
-            if not lease_id or entry is None:
+            lease_id = None
+            if not isinstance(entry, EnvCredential):
+                lease_id = self.pool.acquire_lease(getattr(entry, "id", None))
+                entry = self.pool.current()
+            if (lease_id is not None and entry is None) or not getattr(entry, "runtime_api_key", ""):
                 return RuntimeResult(
                     ok=False,
                     text="",
@@ -212,9 +311,11 @@ class CodexWorkerRuntime:
                     token_count=prompt_tokens if self.slot.provider_family == "cerebras" else 0,
                     request_count=1,
                 )
-                self.pool.mark_exhausted_and_rotate(status_code=408, error_context={"message": last_error})
+                if not isinstance(entry, EnvCredential):
+                    self.pool.mark_exhausted_and_rotate(status_code=408, error_context={"message": last_error})
             finally:
-                self.pool.release_lease(lease_id)
+                if lease_id is not None:
+                    self.pool.release_lease(lease_id)
         return RuntimeResult(
             ok=False,
             text="",
