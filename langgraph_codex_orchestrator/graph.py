@@ -38,6 +38,7 @@ class OrchestratorState(TypedDict, total=False):
     telemetry_summary: Dict[str, Any]
     stage_tasks: Dict[str, List[str]]
     fast_path: bool
+    api_report: Dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -90,6 +91,73 @@ def _summarize_results(results: List[RuntimeResult]) -> List[str]:
             f"attempts={result.attempts} duration={result.duration_seconds:.2f}s\n{preview}"
         )
     return lines
+
+
+def _build_stage_api_report(role: str, allocation: StageAllocation, results: List[RuntimeResult]) -> Dict[str, Any]:
+    providers: Dict[str, Dict[str, Any]] = {}
+    for result in results:
+        provider_key = f"{result.provider_id}|{result.model}|{result.credential_label or '-'}"
+        entry = providers.setdefault(
+            provider_key,
+            {
+                "provider_id": result.provider_id or "(unknown)",
+                "model": result.model or "(unknown)",
+                "credential_label": result.credential_label or "-",
+                "runs": 0,
+                "successes": 0,
+                "rate_limits": 0,
+                "tokens_used": 0,
+                "duration_seconds": 0.0,
+            },
+        )
+        entry["runs"] += 1
+        entry["successes"] += 1 if result.ok else 0
+        entry["rate_limits"] += 1 if result.rate_limited else 0
+        entry["tokens_used"] += int(result.tokens_used or 0)
+        entry["duration_seconds"] += float(result.duration_seconds or 0.0)
+    provider_rows = sorted(
+        providers.values(),
+        key=lambda item: (-int(item["runs"]), str(item["provider_id"]), str(item["credential_label"])),
+    )
+    return {
+        "role": role,
+        "planned_workers": int(allocation.workers),
+        "actual_api_count": len(provider_rows),
+        "completed_shards": len(results),
+        "successful_shards": sum(1 for result in results if result.ok),
+        "total_tokens_used": sum(int(result.tokens_used or 0) for result in results),
+        "total_duration_seconds": round(sum(float(result.duration_seconds or 0.0) for result in results), 3),
+        "providers": provider_rows,
+    }
+
+
+def _format_api_report(report: Dict[str, Any]) -> str:
+    if not report:
+        return "API usage:\n(no usage recorded)"
+    lines = ["API usage:"]
+    ordered_roles = list(ROLE_NAMES)
+    if "fast_path" in report:
+        ordered_roles = ["fast_path", *ordered_roles]
+    for role in ordered_roles:
+        stage = report.get(role)
+        if not stage:
+            continue
+        lines.append(
+            f"- {role}: planned_workers={stage.get('planned_workers', 0)} "
+            f"actual_apis={stage.get('actual_api_count', 0)} "
+            f"completed_shards={stage.get('completed_shards', 0)} "
+            f"successes={stage.get('successful_shards', 0)} "
+            f"tokens={stage.get('total_tokens_used', 0)} "
+            f"duration={stage.get('total_duration_seconds', 0)}s"
+        )
+        for provider in stage.get("providers", []):
+            lines.append(
+                f"  {provider.get('provider_id')} [{provider.get('credential_label')}] "
+                f"model={provider.get('model')} runs={provider.get('runs')} "
+                f"successes={provider.get('successes')} rate_limits={provider.get('rate_limits')} "
+                f"tokens={provider.get('tokens_used')} duration={round(float(provider.get('duration_seconds') or 0.0), 3)}s"
+            )
+    return "\n".join(lines)
 
 
 def _decompose_stage_tasks(state: OrchestratorState, role: str, workers: int) -> List[StageTask]:
@@ -473,7 +541,30 @@ def _fast_execute(state: OrchestratorState) -> OrchestratorState:
             if result.ok:
                 break
     final = result.text if result and result.ok else (result.error if result else "fast-path execution failed")
-    return {**state, "final_response": final}
+    fast_report = {}
+    if result:
+        fast_report["fast_path"] = {
+            "role": "fast_path",
+            "planned_workers": 1,
+            "actual_api_count": 1 if result.provider_id else 0,
+            "completed_shards": 1,
+            "successful_shards": 1 if result.ok else 0,
+            "total_tokens_used": int(result.tokens_used or 0),
+            "total_duration_seconds": round(float(result.duration_seconds or 0.0), 3),
+            "providers": [
+                {
+                    "provider_id": result.provider_id or "(unknown)",
+                    "model": result.model or "(unknown)",
+                    "credential_label": result.credential_label or "-",
+                    "runs": 1,
+                    "successes": 1 if result.ok else 0,
+                    "rate_limits": 1 if result.rate_limited else 0,
+                    "tokens_used": int(result.tokens_used or 0),
+                    "duration_seconds": round(float(result.duration_seconds or 0.0), 3),
+                }
+            ],
+        }
+    return {**state, "final_response": final, "api_report": fast_report}
 
 
 def _classify(state: OrchestratorState) -> OrchestratorState:
@@ -577,15 +668,32 @@ def _stage_node(role: str, provider_family: str):
         additions = _summarize_results(results)
         if role == "implementer":
             _progress("completed stage: implementer")
-            return {**state, "implementation": "\n\n".join(additions)}
+            return {
+                **state,
+                "implementation": "\n\n".join(additions),
+                "api_report": {**dict(state.get("api_report") or {}), role: _build_stage_api_report(role, allocation, results)},
+            }
         if role == "verifier":
             _progress("completed stage: verifier")
-            return {**state, "verification": "\n\n".join(additions), "telemetry_summary": telemetry.summarize()}
+            return {
+                **state,
+                "verification": "\n\n".join(additions),
+                "telemetry_summary": telemetry.summarize(),
+                "api_report": {**dict(state.get("api_report") or {}), role: _build_stage_api_report(role, allocation, results)},
+            }
         if role == "summarizer":
             _progress("completed stage: summarizer")
-            return {**state, "summaries": additions}
+            return {
+                **state,
+                "summaries": additions,
+                "api_report": {**dict(state.get("api_report") or {}), role: _build_stage_api_report(role, allocation, results)},
+            }
         _progress(f"completed stage: {role}")
-        return {**state, key: current + additions}
+        return {
+            **state,
+            key: current + additions,
+            "api_report": {**dict(state.get("api_report") or {}), role: _build_stage_api_report(role, allocation, results)},
+        }
     return _run
 
 
@@ -597,6 +705,7 @@ def _finalize(state: OrchestratorState) -> OrchestratorState:
         "Summaries:\n" + "\n\n".join(state.get("summaries") or []),
         "Implementation:\n" + str(state.get("implementation") or "").strip(),
         "Verification:\n" + str(state.get("verification") or "").strip(),
+        _format_api_report(dict(state.get("api_report") or {})),
         "Telemetry:\n" + str(state.get("telemetry_summary") or {}),
     ]
     return {**state, "final_response": "\n\n".join(section for section in sections if section.strip())}
