@@ -2812,6 +2812,20 @@ def _(rid, params: dict) -> dict:
     if _cmd_base in _PENDING_INPUT_COMMANDS:
         return _err(rid, 4018, f"pending-input command: use command.dispatch for /{_cmd_base}")
 
+    if _cmd_base == "model":
+        arg = cmd.split(None, 1)[1].strip() if len(cmd.split(None, 1)) > 1 else ""
+        if not arg:
+            return _err(rid, 4018, "model picker command: use model.options")
+        try:
+            result = _apply_model_switch(params.get("session_id", ""), session, arg)
+            output = f"Model set to: {result.get('value', '')}"
+            payload = {"output": output}
+            if result.get("warning"):
+                payload["warning"] = result["warning"]
+            return _ok(rid, payload)
+        except Exception as e:
+            return _err(rid, 5030, str(e))
+
     try:
         from agent.skill_commands import get_skill_commands
         _cmd_key = f"/{_cmd_base}"
