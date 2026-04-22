@@ -68,6 +68,57 @@ export const setupCommands: SlashCommand[] = [
     }
   },
   {
+    help: 'show or reset recorded orchestrator quota usage',
+    name: 'quota',
+    usage: '/quota [show|reset [all|gemini|cerebras]]',
+    run: async (arg, ctx) => {
+      const trimmed = arg.trim()
+      const parts = trimmed ? trimmed.split(/\s+/) : []
+      const action = parts[0] || 'show'
+      let launchArgs: string[] = []
+
+      if (action === 'show') {
+        launchArgs = ['--quota-show']
+      } else if (action === 'reset') {
+        const target = parts[1] || 'all'
+        if (!['all', 'gemini', 'cerebras'].includes(target)) {
+          ctx.transcript.sys('usage: /quota [show|reset [all|gemini|cerebras]]')
+          return
+        }
+        launchArgs = ['--quota-reset', target]
+      } else {
+        ctx.transcript.sys('usage: /quota [show|reset [all|gemini|cerebras]]')
+        return
+      }
+
+      ctx.transcript.sys(`launching \`hermes-orchestrator ${launchArgs.join(' ')}\`…`)
+
+      let result: LaunchResult = { code: null }
+
+      await withInkSuspended(async () => {
+        result = await launchHermesOrchestratorCaptured(launchArgs)
+      })
+
+      if (result.error) {
+        ctx.transcript.sys(`error launching hermes-orchestrator: ${result.error}`)
+        return
+      }
+
+      if (result.code !== 0) {
+        const detail = [result.stderr, result.stdout].filter(Boolean).join('\n').trim()
+        ctx.transcript.page(detail || `hermes-orchestrator exited with code ${result.code}`, 'Quota Error')
+        return
+      }
+
+      const output = [result.stdout, result.stderr].filter(Boolean).join('\n').trim()
+      if (output) {
+        ctx.transcript.page(output, 'Quota')
+      } else {
+        ctx.transcript.sys('quota command completed with no output')
+      }
+    }
+  },
+  {
     help: 'configure LLM provider + model (launches `hermes model`)',
     name: 'provider',
     run: (_arg, ctx) =>

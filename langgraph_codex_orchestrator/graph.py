@@ -281,7 +281,7 @@ def _maximize_stage_workers(role: str, workers: int) -> int:
 
 
 def _planned_task_count(dispatch_workers: int) -> int:
-    return max(dispatch_workers, min(120, dispatch_workers * 4))
+    return max(dispatch_workers, min(240, dispatch_workers * 6))
 
 
 def _dispatch_worker_count(role: str, task_type: str, difficulty: int, workers: int) -> int:

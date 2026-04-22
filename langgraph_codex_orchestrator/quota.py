@@ -7,7 +7,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Iterable
 from zoneinfo import ZoneInfo
 
 from .config import DEFAULT_CEREBRAS_DAILY_TOKEN_BUDGET, DEFAULT_GEMINI_DAILY_REQUEST_BUDGET
@@ -169,12 +169,14 @@ class QuotaStore:
         result: Dict[str, Any] = {}
         for family in ("gemini", "cerebras"):
             info = self._touch_window_meta(payload, family)
+            window_meta = payload.get("meta", {}).get("windows", {}).get(family, {})
             day = payload.get("days", {}).get(info["window_key"], {})
             entries = day.get(family, {})
             family_entries = list(entries.values())
             result[family] = {
                 "window_key": info["window_key"],
-                "last_reset_at": info["reset_at"],
+                "last_reset_at": str(window_meta.get("last_reset_at") or info["reset_at"]),
+                "last_manual_reset_at": window_meta.get("last_manual_reset_at"),
                 "next_reset_at": info["next_reset_at"],
                 "entries": family_entries,
                 "totals": {
@@ -184,3 +186,22 @@ class QuotaStore:
             }
         self.save(payload)
         return result
+
+    def reset(self, provider_families: Iterable[str] | None = None) -> Dict[str, Any]:
+        payload = self.load()
+        current = _now_local().isoformat()
+        families = list(provider_families or ("gemini", "cerebras"))
+        for family in families:
+            info = self._touch_window_meta(payload, family)
+            days = payload.setdefault("days", {})
+            day = days.setdefault(info["window_key"], {})
+            day[family] = {}
+            windows = payload.setdefault("meta", {}).setdefault("windows", {})
+            window_meta = windows.setdefault(family, {})
+            window_meta["window_key"] = info["window_key"]
+            window_meta["last_reset_at"] = current
+            window_meta["last_manual_reset_at"] = current
+            window_meta["next_reset_at"] = info["next_reset_at"]
+            window_meta["updated_at"] = current
+        self.save(payload)
+        return self.summary()
