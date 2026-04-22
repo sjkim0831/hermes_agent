@@ -17,6 +17,24 @@ describe('createSlashHandler', () => {
     expect(getOverlayState().picker).toBe(true)
   })
 
+  it('opens the auth picker locally', () => {
+    const ctx = buildCtx()
+
+    expect(createSlashHandler(ctx)('/auth')).toBe(true)
+    expect(getOverlayState().authPicker).toBe(true)
+    expect(ctx.gateway.rpc).not.toHaveBeenCalled()
+    expect(ctx.gateway.gw.request).not.toHaveBeenCalled()
+  })
+
+  it('opens the routing picker locally', () => {
+    const ctx = buildCtx()
+
+    expect(createSlashHandler(ctx)('/routing')).toBe(true)
+    expect(getOverlayState().routingPicker).toBe(true)
+    expect(ctx.gateway.rpc).not.toHaveBeenCalled()
+    expect(ctx.gateway.gw.request).not.toHaveBeenCalled()
+  })
+
   it('opens the skills hub locally for bare /skills', () => {
     const ctx = buildCtx()
 

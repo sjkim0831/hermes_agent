@@ -137,6 +137,61 @@ def test_setup_status_reports_provider_config(monkeypatch):
     assert resp["result"]["provider_configured"] is False
 
 
+def test_auth_status_lists_pool_entries(monkeypatch):
+    class _Entry:
+        def __init__(self, id, label, auth_type, source, current=False):
+            self.id = id
+            self.label = label
+            self.auth_type = auth_type
+            self.source = source
+            self._current = current
+
+    class _Pool:
+        def __init__(self, provider):
+            self.provider = provider
+
+        def entries(self):
+            if self.provider == "anthropic":
+                return [_Entry("a1", "work", "oauth", "manual:hermes_pkce", True)]
+            return []
+
+        def peek(self):
+            return self.entries()[0] if self.entries() else None
+
+    monkeypatch.setattr("agent.credential_pool.load_pool", lambda provider: _Pool(provider))
+    monkeypatch.setattr("agent.credential_pool.get_pool_strategy", lambda provider: "fill_first")
+    monkeypatch.setattr("agent.credential_pool.list_custom_pool_providers", lambda: [])
+    monkeypatch.setattr("hermes_cli.auth_commands._get_custom_provider_names", lambda: [])
+    monkeypatch.setattr("hermes_cli.auth_commands._format_exhausted_status", lambda entry: "")
+
+    resp = server.handle_request({"id": "1", "method": "auth.status", "params": {}})
+
+    assert "result" in resp
+    anthropic = next(item for item in resp["result"]["providers"] if item["slug"] == "anthropic")
+    assert anthropic["entry_count"] == 1
+    assert anthropic["current_label"] == "work"
+    assert anthropic["entries"][0]["is_current"] is True
+    assert anthropic["entries"][0]["status"] == "ready"
+
+
+def test_auth_strategy_persists(monkeypatch):
+    saved = {}
+
+    monkeypatch.setattr("hermes_cli.config.load_config", lambda: {})
+    monkeypatch.setattr("hermes_cli.config.save_config", lambda cfg: saved.update(cfg))
+
+    resp = server.handle_request(
+        {
+            "id": "1",
+            "method": "auth.strategy",
+            "params": {"provider": "anthropic", "strategy": "round_robin"},
+        }
+    )
+
+    assert resp["result"]["strategy"] == "round_robin"
+    assert saved["credential_pool_strategies"]["anthropic"] == "round_robin"
+
+
 def test_config_set_reasoning_updates_live_session_and_agent(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "_hermes_home", tmp_path)
     agent = types.SimpleNamespace(reasoning_config=None)
@@ -888,6 +943,77 @@ def test_config_set_model_allowed_when_idle(monkeypatch):
         assert seen["called"]
     finally:
         server._sessions.pop("sid", None)
+
+
+def test_routing_set_executor_uses_model_switch(monkeypatch):
+    seen = {}
+
+    def _fake_apply(sid, session, raw):
+        seen["args"] = (sid, session["session_key"], raw)
+        return {"value": "qwen-3-235b-a22b-instruct-2507", "warning": ""}
+
+    monkeypatch.setattr(server, "_apply_model_switch", _fake_apply)
+    monkeypatch.setattr(
+        server,
+        "_routing_status_for_session",
+        lambda session=None: {
+            "executor": {"provider": "custom:cerebras-api-101", "model": "qwen-3-235b-a22b-instruct-2507"},
+            "planner": {"provider": "custom:gemini-api-101", "model": "gemini-2.5-flash"},
+        },
+    )
+
+    server._sessions["sid"] = _session()
+    try:
+        resp = server.handle_request(
+            {
+                "id": "1",
+                "method": "routing.set",
+                "params": {
+                    "session_id": "sid",
+                    "role": "executor",
+                    "provider": "custom:cerebras-api-101",
+                    "model": "qwen-3-235b-a22b-instruct-2507",
+                },
+            }
+        )
+        assert resp["result"]["executor"]["provider"] == "custom:cerebras-api-101"
+        assert seen["args"] == (
+            "sid",
+            "session-key",
+            "qwen-3-235b-a22b-instruct-2507 --provider custom:cerebras-api-101 --global",
+        )
+    finally:
+        server._sessions.pop("sid", None)
+
+
+def test_routing_set_planner_persists_auxiliary_planning(monkeypatch):
+    writes = {}
+
+    monkeypatch.setattr(server, "_write_config_key", lambda key, value: writes.__setitem__(key, value))
+    monkeypatch.setattr(
+        server,
+        "_routing_status_for_session",
+        lambda session=None: {
+            "executor": {"provider": "custom:cerebras-api-101", "model": "qwen-3-235b-a22b-instruct-2507"},
+            "planner": {"provider": "custom:gemini-api-101", "model": "gemini-2.5-flash"},
+        },
+    )
+
+    resp = server.handle_request(
+        {
+            "id": "1",
+            "method": "routing.set",
+            "params": {
+                "role": "planner",
+                "provider": "custom:gemini-api-101",
+                "model": "gemini-2.5-flash",
+            },
+        }
+    )
+
+    assert resp["result"]["planner"]["provider"] == "custom:gemini-api-101"
+    assert writes["auxiliary.planning.provider"] == "custom:gemini-api-101"
+    assert writes["auxiliary.planning.model"] == "gemini-2.5-flash"
 
 
 def test_mirror_slash_side_effects_rejects_mutating_commands_while_running(monkeypatch):

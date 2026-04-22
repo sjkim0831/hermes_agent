@@ -468,6 +468,20 @@ def switch_model(
     new_model = raw_input.strip()
     target_provider = current_provider
 
+    if user_providers is None or custom_providers is None:
+        try:
+            from hermes_cli.config import load_config
+
+            cfg = load_config() or {}
+        except Exception:
+            cfg = {}
+        if user_providers is None:
+            loaded_user_providers = cfg.get("providers")
+            user_providers = loaded_user_providers if isinstance(loaded_user_providers, dict) else None
+        if custom_providers is None:
+            loaded_custom_providers = cfg.get("custom_providers")
+            custom_providers = loaded_custom_providers if isinstance(loaded_custom_providers, list) else None
+
     # =================================================================
     # PATH A: Explicit --provider given
     # =================================================================

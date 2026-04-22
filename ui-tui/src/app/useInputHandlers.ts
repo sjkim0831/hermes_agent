@@ -49,6 +49,10 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
         .then(r => r && (patchOverlayState({ approval: null }), patchTurnState({ outcome: 'denied' })))
     }
 
+    if (overlay.authPicker) {
+      return patchOverlayState({ authPicker: false })
+    }
+
     if (overlay.sudo) {
       return gateway
         .rpc<SudoRespondResponse>('sudo.respond', { password: '', request_id: overlay.sudo.requestId })
@@ -63,6 +67,10 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
 
     if (overlay.modelPicker) {
       return patchOverlayState({ modelPicker: false })
+    }
+
+    if (overlay.routingPicker) {
+      return patchOverlayState({ routingPicker: false })
     }
 
     if (overlay.skillsHub) {
@@ -186,8 +194,12 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
 
       if (isCtrl(key, ch, 'c')) {
         cancelOverlayFromCtrlC()
+      } else if (key.escape && overlay.authPicker) {
+        patchOverlayState({ authPicker: false })
       } else if (key.escape && overlay.picker) {
         patchOverlayState({ picker: false })
+      } else if (key.escape && overlay.routingPicker) {
+        patchOverlayState({ routingPicker: false })
       }
 
       return

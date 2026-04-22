@@ -85,6 +85,17 @@ export interface ConfigSetResponse {
   warning?: string
 }
 
+export interface RoutingConfigEntry {
+  model?: string
+  provider?: string
+  warning?: string
+}
+
+export interface RoutingStatusResponse {
+  executor?: RoutingConfigEntry
+  planner?: RoutingConfigEntry
+}
+
 export interface SetupStatusResponse {
   provider_configured?: boolean
 }
@@ -269,6 +280,29 @@ export interface ModelOptionsResponse {
   model?: string
   provider?: string
   providers?: ModelOptionProvider[]
+}
+
+export interface AuthStatusEntry {
+  auth_type: string
+  id: string
+  is_current?: boolean
+  label: string
+  source: string
+  status?: string
+}
+
+export interface AuthStatusProvider {
+  current_label?: string
+  entries?: AuthStatusEntry[]
+  entry_count?: number
+  name: string
+  oauth_capable?: boolean
+  slug: string
+  strategy?: string
+}
+
+export interface AuthStatusResponse {
+  providers?: AuthStatusProvider[]
 }
 
 // ── MCP ──────────────────────────────────────────────────────────────

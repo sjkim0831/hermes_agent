@@ -69,6 +69,92 @@ class TestSaveModelChoiceAlwaysDict:
 
 
 class TestProviderPersistsAfterModelSave:
+    def test_switch_model_resolves_custom_provider_from_saved_config(self, config_home, monkeypatch):
+        import yaml
+
+        (config_home / "config.yaml").write_text(
+            yaml.safe_dump(
+                {
+                    "model": {
+                        "provider": "custom:gemini-api-101",
+                        "default": "gemini-2.5-flash",
+                    },
+                    "custom_providers": [
+                        {
+                            "name": "Gemini API 101",
+                            "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+                            "key_env": "GEMINI_API_KEY_101",
+                            "model": "gemini-2.5-flash",
+                            "api_mode": "chat_completions",
+                            "provider_key": "codex-gemini-cli",
+                        },
+                        {
+                            "name": "Cerebras API 101",
+                            "base_url": "https://api.cerebras.ai/v1",
+                            "key_env": "CEREBRAS_API_KEY_101",
+                            "model": "qwen-3-235b-a22b-instruct-2507",
+                            "api_mode": "chat_completions",
+                            "provider_key": "codex-cerebras-cli",
+                        },
+                    ],
+                },
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("GEMINI_API_KEY_101", "gemini-key")
+        monkeypatch.setenv("CEREBRAS_API_KEY_101", "cerebras-key")
+
+        from hermes_cli.model_switch import switch_model
+
+        result = switch_model(
+            raw_input="qwen-3-235b-a22b-instruct-2507",
+            current_provider="custom:gemini-api-101",
+            current_model="gemini-2.5-flash",
+            explicit_provider="custom:cerebras-api-101",
+        )
+
+        assert result.success is True
+        assert result.target_provider == "custom:cerebras-api-101"
+        assert result.new_model == "qwen-3-235b-a22b-instruct-2507"
+
+    def test_api_key_provider_uses_pool_credential_without_prompt(self, config_home, monkeypatch):
+        """Saved pool credentials should skip the manual key prompt on provider switch."""
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+
+        from hermes_cli.main import _model_flow_api_key_provider
+        from hermes_cli.config import load_config
+
+        with patch(
+            "hermes_cli.auth.resolve_api_key_provider_credentials",
+            return_value={
+                "provider": "gemini",
+                "api_key": "gemini-pool-key-123456",
+                "base_url": "https://generativelanguage.googleapis.com/v1beta",
+                "source": "pool:gemini-primary",
+            },
+        ), patch(
+            "hermes_cli.auth._prompt_model_selection",
+            return_value="gemini-2.5-pro",
+        ), patch(
+            "hermes_cli.auth.deactivate_provider",
+        ), patch(
+            "builtins.input",
+            return_value="",
+        ), patch(
+            "getpass.getpass",
+            side_effect=AssertionError("manual API key prompt should not run when pool credentials exist"),
+        ):
+            _model_flow_api_key_provider(load_config(), "gemini", "old-model")
+
+        import yaml
+        config = yaml.safe_load((config_home / "config.yaml").read_text()) or {}
+        model = config.get("model")
+        assert isinstance(model, dict)
+        assert model.get("provider") == "gemini"
+        assert model.get("default") == "gemini-2.5-pro"
+
     def test_api_key_provider_saved_when_model_was_string(self, config_home, monkeypatch):
         """_model_flow_api_key_provider must persist the provider even when
         config.model started as a plain string."""

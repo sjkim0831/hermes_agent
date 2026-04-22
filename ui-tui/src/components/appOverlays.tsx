@@ -7,9 +7,11 @@ import { $overlayState, patchOverlayState } from '../app/overlayStore.js'
 import { $uiState } from '../app/uiStore.js'
 
 import { FloatBox } from './appChrome.js'
+import { AuthPicker } from './authPicker.js'
 import { MaskedPrompt } from './maskedPrompt.js'
 import { ModelPicker } from './modelPicker.js'
 import { ApprovalPrompt, ClarifyPrompt, ConfirmPrompt } from './prompts.js'
+import { RoutingPicker } from './routingPicker.js'
 import { SessionPicker } from './sessionPicker.js'
 import { SkillsHub } from './skillsHub.js'
 
@@ -100,7 +102,8 @@ export function FloatingOverlays({
   const overlay = useStore($overlayState)
   const ui = useStore($uiState)
 
-  const hasAny = overlay.modelPicker || overlay.pager || overlay.picker || overlay.skillsHub || completions.length
+  const hasAny =
+    overlay.authPicker || overlay.modelPicker || overlay.pager || overlay.picker || overlay.routingPicker || overlay.skillsHub || completions.length
 
   if (!hasAny) {
     return null
@@ -110,6 +113,12 @@ export function FloatingOverlays({
 
   return (
     <Box alignItems="flex-start" bottom="100%" flexDirection="column" left={0} position="absolute" right={0}>
+      {overlay.authPicker && (
+        <FloatBox color={ui.theme.color.bronze}>
+          <AuthPicker gw={gw} onClose={() => patchOverlayState({ authPicker: false })} t={ui.theme} />
+        </FloatBox>
+      )}
+
       {overlay.picker && (
         <FloatBox color={ui.theme.color.bronze}>
           <SessionPicker
@@ -127,6 +136,17 @@ export function FloatingOverlays({
             gw={gw}
             onCancel={() => patchOverlayState({ modelPicker: false })}
             onSelect={onModelSelect}
+            sessionId={ui.sid}
+            t={ui.theme}
+          />
+        </FloatBox>
+      )}
+
+      {overlay.routingPicker && (
+        <FloatBox color={ui.theme.color.bronze}>
+          <RoutingPicker
+            gw={gw}
+            onClose={() => patchOverlayState({ routingPicker: false })}
             sessionId={ui.sid}
             t={ui.theme}
           />

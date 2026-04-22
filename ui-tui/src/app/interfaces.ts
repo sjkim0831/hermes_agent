@@ -53,11 +53,13 @@ export interface GatewayProviderProps {
 
 export interface OverlayState {
   approval: ApprovalReq | null
+  authPicker: boolean
   clarify: ClarifyReq | null
   confirm: ConfirmReq | null
   modelPicker: boolean
   pager: null | PagerState
   picker: boolean
+  routingPicker: boolean
   secret: null | SecretReq
   skillsHub: boolean
   sudo: null | SudoReq

@@ -4,11 +4,13 @@ import type { OverlayState } from './interfaces.js'
 
 const buildOverlayState = (): OverlayState => ({
   approval: null,
+  authPicker: false,
   clarify: null,
   confirm: null,
   modelPicker: false,
   pager: null,
   picker: false,
+  routingPicker: false,
   secret: null,
   skillsHub: false,
   sudo: null
@@ -18,8 +20,8 @@ export const $overlayState = atom<OverlayState>(buildOverlayState())
 
 export const $isBlocked = computed(
   $overlayState,
-  ({ approval, clarify, confirm, modelPicker, pager, picker, secret, skillsHub, sudo }) =>
-    Boolean(approval || clarify || confirm || modelPicker || pager || picker || secret || skillsHub || sudo)
+  ({ approval, authPicker, clarify, confirm, modelPicker, pager, picker, routingPicker, secret, skillsHub, sudo }) =>
+    Boolean(approval || authPicker || clarify || confirm || modelPicker || pager || picker || routingPicker || secret || skillsHub || sudo)
 )
 
 export const getOverlayState = () => $overlayState.get()

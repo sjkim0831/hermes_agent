@@ -505,6 +505,10 @@ def _apply_model_switch(sid: str, session: dict, raw_input: str) -> dict:
         current_base_url = str(runtime.get("base_url", "") or "")
         current_api_key = str(runtime.get("api_key", "") or "")
 
+    cfg = _load_cfg()
+    user_providers = cfg.get("providers")
+    custom_providers = cfg.get("custom_providers")
+
     result = switch_model(
         raw_input=model_input,
         current_provider=current_provider,
@@ -513,6 +517,8 @@ def _apply_model_switch(sid: str, session: dict, raw_input: str) -> dict:
         current_api_key=current_api_key,
         is_global=persist_global,
         explicit_provider=explicit_provider,
+        user_providers=user_providers if isinstance(user_providers, dict) else None,
+        custom_providers=custom_providers if isinstance(custom_providers, list) else None,
     )
     if not result.success:
         raise ValueError(result.error_message or "model switch failed")
@@ -532,6 +538,126 @@ def _apply_model_switch(sid: str, session: dict, raw_input: str) -> dict:
     if persist_global:
         _persist_model_switch(result)
     return {"value": result.new_model, "warning": result.warning_message or ""}
+
+
+def _planner_prompt_text(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        parts = []
+        for item in value:
+            if isinstance(item, str) and item.strip():
+                parts.append(item.strip())
+            elif isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str) and text.strip():
+                    parts.append(text.strip())
+        return "\n".join(parts).strip()
+    if isinstance(value, dict):
+        text = value.get("text")
+        if isinstance(text, str):
+            return text.strip()
+    return str(value).strip()
+
+
+def _planner_enabled_config(cfg: dict) -> dict:
+    auxiliary = cfg.get("auxiliary", {}) if isinstance(cfg, dict) else {}
+    planning = auxiliary.get("planning", {}) if isinstance(auxiliary, dict) else {}
+    return planning if isinstance(planning, dict) else {}
+
+
+def _plan_executor_prompt(prompt: str, agent) -> str:
+    planning = _planner_enabled_config(_load_cfg())
+    provider = str(planning.get("provider", "") or "").strip()
+    base_url = str(planning.get("base_url", "") or "").strip()
+    if not provider and not base_url:
+        return prompt
+
+    model = str(planning.get("model", "") or "").strip() or None
+    api_key = str(planning.get("api_key", "") or "").strip() or None
+
+    planner_messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a front-end planner for a Codex execution agent. "
+                "Rewrite the user's request into a precise execution brief. "
+                "Do not solve the task. "
+                "Return only these sections:\n"
+                "GOAL\n"
+                "CONSTRAINTS\n"
+                "FILES\n"
+                "TASKS\n"
+                "SUCCESS CHECK\n"
+                "Keep it concise and concrete."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Execution provider: {getattr(agent, 'provider', '') or 'unknown'}\n"
+                f"Execution model: {getattr(agent, 'model', '') or 'unknown'}\n\n"
+                f"User request:\n{prompt}"
+            ),
+        },
+    ]
+
+    try:
+        from agent.auxiliary_client import call_llm
+
+        response = call_llm(
+            task="planning",
+            provider=provider or None,
+            model=model,
+            base_url=base_url or None,
+            api_key=api_key,
+            messages=planner_messages,
+            temperature=0.1,
+            max_tokens=900,
+        )
+        brief = _planner_prompt_text(
+            getattr(getattr(response.choices[0], "message", None), "content", "")
+        )
+        if not brief:
+            return prompt
+        return (
+            "Planner brief for the execution model:\n"
+            f"{brief}\n\n"
+            "Original user request:\n"
+            f"{prompt}"
+        )
+    except Exception as exc:
+        print(f"[tui_gateway] planner routing failed: {exc}", file=sys.stderr)
+        return prompt
+
+
+def _routing_status_for_session(session: dict | None = None) -> dict:
+    cfg = _load_cfg()
+    model_cfg = cfg.get("model", {}) if isinstance(cfg, dict) else {}
+    if not isinstance(model_cfg, dict):
+        model_cfg = {"default": str(model_cfg or "")}
+    planning = _planner_enabled_config(cfg)
+
+    agent = session.get("agent") if isinstance(session, dict) else None
+    executor_provider = (
+        getattr(agent, "provider", "") if agent is not None else str(model_cfg.get("provider", "") or "")
+    )
+    executor_model = (
+        getattr(agent, "model", "") if agent is not None else str(model_cfg.get("default", "") or "")
+    )
+
+    return {
+        "executor": {
+            "provider": str(executor_provider or ""),
+            "model": str(executor_model or ""),
+        },
+        "planner": {
+            "provider": str(planning.get("provider", "") or ""),
+            "model": str(planning.get("model", "") or ""),
+        },
+    }
 
 
 def _compress_session_history(session: dict, focus_topic: str | None = None) -> tuple[int, dict]:
@@ -1528,6 +1654,8 @@ def _(rid, params: dict) -> dict:
                 prompt = ctx.message
 
             prompt = _enrich_with_attached_images(prompt, images) if images else prompt
+            if isinstance(prompt, str) and prompt.strip():
+                prompt = _plan_executor_prompt(prompt, agent)
 
             def _stream(delta):
                 payload = {"text": delta}
@@ -2002,6 +2130,9 @@ def _(rid, params: dict) -> dict:
         return _ok(rid, {"home": str(_hermes_home), "display": display_hermes_home()})
     if key == "full":
         return _ok(rid, {"config": _load_cfg()})
+    if key == "routing":
+        session = _sessions.get(params.get("session_id", ""))
+        return _ok(rid, _routing_status_for_session(session))
     if key == "prompt":
         return _ok(rid, {"prompt": _load_cfg().get("custom_prompt", "")})
     if key == "skin":
@@ -2041,6 +2172,46 @@ def _(rid, params: dict) -> dict:
         except Exception:
             return _ok(rid, {"mtime": 0})
     return _err(rid, 4002, f"unknown config key: {key}")
+
+
+@method("routing.set")
+def _(rid, params: dict) -> dict:
+    role = str(params.get("role", "") or "").strip().lower()
+    provider = str(params.get("provider", "") or "").strip()
+    model = str(params.get("model", "") or "").strip()
+
+    if role not in {"planner", "executor"}:
+        return _err(rid, 4002, f"unknown routing role: {role}")
+    if not provider:
+        return _err(rid, 4002, "provider required")
+
+    if role == "executor":
+        if not model:
+            return _err(rid, 4002, "model required for executor")
+        session = _sessions.get(params.get("session_id", ""))
+        try:
+            if session:
+                result = _apply_model_switch(
+                    params.get("session_id", ""),
+                    session,
+                    f"{model} --provider {provider} --global",
+                )
+            else:
+                result = _apply_model_switch(
+                    "",
+                    {"agent": None},
+                    f"{model} --provider {provider} --global",
+                )
+        except Exception as exc:
+            return _err(rid, 5001, str(exc))
+        payload = _routing_status_for_session(session)
+        payload["executor"]["warning"] = result.get("warning", "")
+        return _ok(rid, payload)
+
+    _write_config_key("auxiliary.planning.provider", provider)
+    _write_config_key("auxiliary.planning.model", model)
+    session = _sessions.get(params.get("session_id", ""))
+    return _ok(rid, _routing_status_for_session(session))
 
 
 @method("setup.status")

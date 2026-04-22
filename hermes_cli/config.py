@@ -531,6 +531,13 @@ DEFAULT_CONFIG = {
             "api_key": "",
             "timeout": 30,
         },
+        "planning": {
+            "provider": "",        # e.g. "custom:gemini-api-101" (empty = disabled)
+            "model": "",           # empty = provider entry default model
+            "base_url": "",
+            "api_key": "",
+            "timeout": 45,
+        },
         "mcp": {
             "provider": "auto",
             "model": "",
