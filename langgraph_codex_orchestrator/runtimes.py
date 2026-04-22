@@ -71,7 +71,6 @@ class CodexWorkerRuntime:
         return False
 
     def _choose_entry(self, estimated_tokens: int):
-        candidates = []
         entries = list(self.pool.entries())
         if not entries and self.slot.key_env:
             raw = os.environ.get(self.slot.key_env, "").strip()
@@ -98,17 +97,8 @@ class CodexWorkerRuntime:
                 reason=decision.reason,
             )
             if decision.allowed:
-                candidates.append((entry, decision))
-        if not candidates:
-            return None, None
-        candidates.sort(
-            key=lambda item: (
-                self.telemetry.provider_penalty(self.slot.provider_id, self.slot.model),
-                0 if item[1].remaining < 0 else item[1].remaining,
-            ),
-            reverse=False,
-        )
-        return candidates[0]
+                return entry, decision
+        return None, None
 
     def run_fast_prompt(
         self,

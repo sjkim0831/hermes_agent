@@ -281,7 +281,7 @@ def _maximize_stage_workers(role: str, workers: int) -> int:
 
 
 def _planned_task_count(dispatch_workers: int) -> int:
-    return max(dispatch_workers, min(60, dispatch_workers * 2))
+    return max(dispatch_workers, min(120, dispatch_workers * 4))
 
 
 def _dispatch_worker_count(role: str, task_type: str, difficulty: int, workers: int) -> int:
@@ -311,19 +311,19 @@ def _run_parallel_role(
     telemetry = TelemetryStore()
     dispatch_workers = _dispatch_worker_count(role, str(state.get("task_type") or "general"), int(state.get("difficulty") or 1), allocation.workers)
     planned_tasks = _planned_task_count(dispatch_workers)
-    stage_tasks = [
-        StageTask(
-            role=role,
-            shard_index=index + 1,
-            shard_count=planned_tasks,
-            instruction=item,
-            title=f"{role}-{index + 1}",
-            ownership=f"{role} shard {index + 1}/{planned_tasks}",
-        )
-        for index, item in enumerate((state.get("stage_tasks") or {}).get(role, []))
-    ][:planned_tasks]
+    stage_tasks = _plan_stage_tasks_with_header(state, role, planned_tasks)
     if not stage_tasks:
-        stage_tasks = _plan_stage_tasks_with_header(state, role, planned_tasks)
+        stage_tasks = [
+            StageTask(
+                role=role,
+                shard_index=index + 1,
+                shard_count=planned_tasks,
+                instruction=item,
+                title=f"{role}-{index + 1}",
+                ownership=f"{role} shard {index + 1}/{planned_tasks}",
+            )
+            for index, item in enumerate((state.get("stage_tasks") or {}).get(role, []))
+        ][:planned_tasks]
     prompt_base = (
         f"You are the {role} stage in a LangGraph Codex orchestration.\n"
         f"Task type: {state['task_type']}\n"
@@ -367,7 +367,6 @@ def _run_parallel_role(
         pending_tasks = list(stage_tasks)
         available_runtimes = list(runtimes)
         future_map = {}
-        runtime_usage: Dict[str, int] = {}
 
         def schedule_one(runtime: CodexWorkerRuntime, stage_task: StageTask) -> None:
             shard_prompt = (
@@ -384,21 +383,9 @@ def _run_parallel_role(
                 model=_preferred_model_for_role(role, runtime, state),
             )
             future_map[future] = (runtime, stage_task)
-            runtime_usage[runtime.slot.provider_id] = runtime_usage.get(runtime.slot.provider_id, 0) + 1
 
         while pending_tasks and available_runtimes and len(future_map) < dispatch_workers:
-            runtime = min(
-                available_runtimes,
-                key=lambda item: (
-                    runtime_usage.get(item.slot.provider_id, 0),
-                    telemetry.provider_penalty(
-                        item.slot.provider_id,
-                        _preferred_model_for_role(role, item, state),
-                    ),
-                    item.slot.provider_id,
-                ),
-            )
-            available_runtimes.remove(runtime)
+            runtime = available_runtimes.pop(0)
             schedule_one(runtime, pending_tasks.pop(0))
 
         while future_map:
@@ -425,18 +412,7 @@ def _run_parallel_role(
                     available_runtimes.append(runtime)
 
             while pending_tasks and available_runtimes and len(future_map) < dispatch_workers:
-                runtime = min(
-                    available_runtimes,
-                    key=lambda item: (
-                        runtime_usage.get(item.slot.provider_id, 0),
-                        telemetry.provider_penalty(
-                            item.slot.provider_id,
-                            _preferred_model_for_role(role, item, state),
-                        ),
-                        item.slot.provider_id,
-                    ),
-                )
-                available_runtimes.remove(runtime)
+                runtime = available_runtimes.pop(0)
                 schedule_one(runtime, pending_tasks.pop(0))
     return results
 
