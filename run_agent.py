@@ -4772,6 +4772,21 @@ class AIAgent:
                 self._client_log_context(),
             )
             return client
+        if self.provider == "codex-gemini-cli" or str(client_kwargs.get("base_url", "")).startswith("codex+gemini://"):
+            from agent.codex_gemini_cli_client import CodexGeminiCLIClient
+
+            safe_kwargs = {
+                k: v for k, v in client_kwargs.items()
+                if k in {"api_key", "base_url", "command", "args"}
+            }
+            client = CodexGeminiCLIClient(**safe_kwargs)
+            logger.info(
+                "Codex Gemini CLI client created (%s, shared=%s) %s",
+                reason,
+                shared,
+                self._client_log_context(),
+            )
+            return client
         if self.provider == "google-gemini-cli" or str(client_kwargs.get("base_url", "")).startswith("cloudcode-pa://"):
             from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
 

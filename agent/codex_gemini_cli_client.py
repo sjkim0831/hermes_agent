@@ -1,7 +1,7 @@
-"""OpenAI-compatible shim that forwards Hermes requests to ``codex-cerebras``.
+"""OpenAI-compatible shim that forwards Hermes requests to ``codex-gemini``.
 
 Hermes expects an OpenAI-style ``client.chat.completions.create(...)`` surface.
-This adapter spawns the local ``codex-cerebras`` CLI, lets Codex perform the
+This adapter spawns the local ``codex-gemini`` CLI, lets Codex perform the
 actual agent/tool loop, then maps the final text response back into the minimal
 chat-completions shape Hermes already understands.
 """
@@ -9,13 +9,12 @@ chat-completions shape Hermes already understands.
 from __future__ import annotations
 
 import os
-import shlex
 import subprocess
 import time
 from types import SimpleNamespace
 from typing import Any
 
-CODEX_CEREBRAS_MARKER_BASE_URL = "codex+cerebras://local"
+CODEX_GEMINI_MARKER_BASE_URL = "codex+gemini://local"
 _DEFAULT_TIMEOUT_SECONDS = 1800.0
 
 
@@ -90,12 +89,12 @@ def _chunk_text(text: str, size: int = 160) -> list[str]:
     return [text[i:i + size] for i in range(0, len(text), size)]
 
 
-class _CodexCerebrasStream:
+class _CodexGeminiStream:
     def __init__(self, text: str):
         self._chunks = _chunk_text(text)
         self._index = 0
 
-    def __iter__(self) -> "_CodexCerebrasStream":
+    def __iter__(self) -> "_CodexGeminiStream":
         return self
 
     def __next__(self) -> Any:
@@ -115,35 +114,35 @@ class _CodexCerebrasStream:
         raise StopIteration
 
 
-class _CodexCerebrasChatCompletions:
-    def __init__(self, client: "CodexCerebrasCLIClient"):
+class _CodexGeminiChatCompletions:
+    def __init__(self, client: "CodexGeminiCLIClient"):
         self._client = client
 
     def create(self, **kwargs: Any) -> Any:
         return self._client._create_chat_completion(**kwargs)
 
 
-class _CodexCerebrasChatNamespace:
-    def __init__(self, client: "CodexCerebrasCLIClient"):
-        self.completions = _CodexCerebrasChatCompletions(client)
+class _CodexGeminiChatNamespace:
+    def __init__(self, client: "CodexGeminiCLIClient"):
+        self.completions = _CodexGeminiChatCompletions(client)
 
 
-class CodexCerebrasCLIClient:
-    """Minimal OpenAI-style client facade backed by ``codex-cerebras``."""
+class CodexGeminiCLIClient:
+    """Minimal OpenAI-style client facade backed by ``codex-gemini``."""
 
     def __init__(
         self,
         *,
         api_key: str,
-        base_url: str = CODEX_CEREBRAS_MARKER_BASE_URL,
+        base_url: str = CODEX_GEMINI_MARKER_BASE_URL,
         command: str | None = None,
         args: list[str] | None = None,
     ) -> None:
         self.api_key = api_key
-        self.base_url = base_url or CODEX_CEREBRAS_MARKER_BASE_URL
-        self.command = command or "codex-cerebras"
+        self.base_url = base_url or CODEX_GEMINI_MARKER_BASE_URL
+        self.command = command or "codex-gemini"
         self.args = list(args or [])
-        self.chat = _CodexCerebrasChatNamespace(self)
+        self.chat = _CodexGeminiChatNamespace(self)
 
     def _build_command(self, *, model: str | None, prompt: str) -> list[str]:
         argv = [self.command, *self.args, "-q"]
@@ -154,7 +153,7 @@ class CodexCerebrasCLIClient:
 
     def _run_codex(self, *, model: str | None, prompt: str, timeout: float) -> str:
         env = os.environ.copy()
-        env["CEREBRAS_API_KEY"] = self.api_key
+        env["GEMINI_API_KEY"] = self.api_key
         env.setdefault("OPENAI_API_KEY", self.api_key)
         cwd = env.get("HERMES_CWD") or os.getcwd()
         argv = self._build_command(model=model, prompt=prompt)
@@ -172,7 +171,7 @@ class CodexCerebrasCLIClient:
             stderr = (result.stderr or "").strip()
             stdout = (result.stdout or "").strip()
             detail = stderr or stdout or f"exit code {result.returncode}"
-            raise RuntimeError(f"codex-cerebras failed: {detail}")
+            raise RuntimeError(f"codex-gemini failed: {detail}")
         return (result.stdout or "").strip()
 
     def _create_chat_completion(self, **kwargs: Any) -> Any:
@@ -185,15 +184,15 @@ class CodexCerebrasCLIClient:
         text = self._run_codex(model=model, prompt=prompt, timeout=timeout)
 
         if stream:
-            return _CodexCerebrasStream(text)
+            return _CodexGeminiStream(text)
 
         message = SimpleNamespace(role="assistant", content=text, tool_calls=None)
         choice = SimpleNamespace(index=0, message=message, finish_reason="stop")
         return SimpleNamespace(
-            id=f"codex-cerebras-{int(time.time() * 1000)}",
+            id=f"codex-gemini-{int(time.time() * 1000)}",
             object="chat.completion",
             created=int(time.time()),
-            model=model or "codex-cerebras",
+            model=model or "codex-gemini",
             choices=[choice],
             usage=None,
         )

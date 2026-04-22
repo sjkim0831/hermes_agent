@@ -10,6 +10,13 @@ else
   echo "  missing: run $ROOT/scripts/install-codex-cerebras.sh"
 fi
 
+echo "Checking codex-gemini launcher..."
+if command -v codex-gemini >/dev/null 2>&1; then
+  echo "  ok: $(command -v codex-gemini)"
+else
+  echo "  missing: run $ROOT/scripts/install-codex-gemini.sh"
+fi
+
 echo "Checking Hermes Python integration..."
 cd "$ROOT"
 if [[ -f venv/bin/activate ]]; then
@@ -29,7 +36,12 @@ providers = [
     p for p in get_compatible_custom_providers(cfg)
     if isinstance(p, dict) and p.get("provider_key") == "codex-cerebras-cli"
 ]
+gemini_providers = [
+    p for p in get_compatible_custom_providers(cfg)
+    if isinstance(p, dict) and p.get("provider_key") == "codex-gemini-cli"
+]
 print(f"  custom Cerebras providers: {len(providers)}")
+print(f"  custom Gemini providers: {len(gemini_providers)}")
 
 runtime = resolve_runtime_provider(requested="custom:cerebras-api-101")
 print(f"  runtime provider: {runtime.get('provider')}")
@@ -37,6 +49,14 @@ print(f"  command: {runtime.get('command')}")
 print(f"  model: {runtime.get('model')}")
 print(f"  api key loaded: {bool(runtime.get('api_key') and runtime.get('api_key') != 'no-key-required')}")
 
+gemini_runtime = resolve_runtime_provider(requested="custom:gemini-api-101")
+print(f"  gemini runtime provider: {gemini_runtime.get('provider')}")
+print(f"  gemini command: {gemini_runtime.get('command')}")
+print(f"  gemini model: {gemini_runtime.get('model')}")
+print(f"  gemini api key loaded: {bool(gemini_runtime.get('api_key') and gemini_runtime.get('api_key') != 'no-key-required')}")
+
 import agent.codex_cerebras_cli_client as bridge
+import agent.codex_gemini_cli_client as gemini_bridge
 print(f"  bridge marker: {bridge.CODEX_CEREBRAS_MARKER_BASE_URL}")
+print(f"  gemini bridge marker: {gemini_bridge.CODEX_GEMINI_MARKER_BASE_URL}")
 PY

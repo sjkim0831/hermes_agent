@@ -72,6 +72,7 @@ DEFAULT_GITHUB_MODELS_BASE_URL = "https://api.githubcopilot.com"
 DEFAULT_COPILOT_ACP_BASE_URL = "acp://copilot"
 DEFAULT_OLLAMA_CLOUD_BASE_URL = "https://ollama.com/v1"
 DEFAULT_CODEX_CEREBRAS_CLI_BASE_URL = "codex+cerebras://local"
+DEFAULT_CODEX_GEMINI_CLI_BASE_URL = "codex+gemini://local"
 CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CODEX_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
 CODEX_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 120
@@ -154,6 +155,13 @@ PROVIDER_REGISTRY: Dict[str, ProviderConfig] = {
         auth_type="external_process",
         inference_base_url=DEFAULT_CODEX_CEREBRAS_CLI_BASE_URL,
         base_url_env_var="HERMES_CODEX_CEREBRAS_BASE_URL",
+    ),
+    "codex-gemini-cli": ProviderConfig(
+        id="codex-gemini-cli",
+        name="Codex Gemini CLI",
+        auth_type="external_process",
+        inference_base_url=DEFAULT_CODEX_GEMINI_CLI_BASE_URL,
+        base_url_env_var="HERMES_CODEX_GEMINI_BASE_URL",
     ),
     "gemini": ProviderConfig(
         id="gemini",
@@ -2611,6 +2619,10 @@ def get_external_process_provider_status(provider_id: str) -> Dict[str, Any]:
         command = os.getenv("HERMES_CODEX_CEREBRAS_COMMAND", "").strip() or "codex-cerebras"
         raw_args = os.getenv("HERMES_CODEX_CEREBRAS_ARGS", "").strip()
         args = shlex.split(raw_args) if raw_args else []
+    elif provider_id == "codex-gemini-cli":
+        command = os.getenv("HERMES_CODEX_GEMINI_COMMAND", "").strip() or "codex-gemini"
+        raw_args = os.getenv("HERMES_CODEX_GEMINI_ARGS", "").strip()
+        args = shlex.split(raw_args) if raw_args else []
     else:
         return {"configured": False}
     base_url = os.getenv(pconfig.base_url_env_var, "").strip() if pconfig.base_url_env_var else ""
@@ -2641,7 +2653,7 @@ def get_auth_status(provider_id: Optional[str] = None) -> Dict[str, Any]:
         return get_qwen_auth_status()
     if target == "google-gemini-cli":
         return get_gemini_oauth_auth_status()
-    if target in {"copilot-acp", "codex-cerebras-cli"}:
+    if target in {"copilot-acp", "codex-cerebras-cli", "codex-gemini-cli"}:
         return get_external_process_provider_status(target)
     # API-key providers
     pconfig = PROVIDER_REGISTRY.get(target)
@@ -2721,6 +2733,10 @@ def resolve_external_process_provider_credentials(provider_id: str) -> Dict[str,
         command = os.getenv("HERMES_CODEX_CEREBRAS_COMMAND", "").strip() or "codex-cerebras"
         raw_args = os.getenv("HERMES_CODEX_CEREBRAS_ARGS", "").strip()
         args = shlex.split(raw_args) if raw_args else []
+    elif provider_id == "codex-gemini-cli":
+        command = os.getenv("HERMES_CODEX_GEMINI_COMMAND", "").strip() or "codex-gemini"
+        raw_args = os.getenv("HERMES_CODEX_GEMINI_ARGS", "").strip()
+        args = shlex.split(raw_args) if raw_args else []
     else:
         raise AuthError(
             f"Provider '{provider_id}' is not a supported external-process provider.",
@@ -2743,10 +2759,21 @@ def resolve_external_process_provider_credentials(provider_id: str) -> Dict[str,
                 provider=provider_id,
                 code="missing_codex_cerebras_cli",
             )
+        if provider_id == "codex-gemini-cli":
+            raise AuthError(
+                f"Could not find the Codex Gemini command '{command}'. "
+                "Install codex-gemini or set HERMES_CODEX_GEMINI_COMMAND.",
+                provider=provider_id,
+                code="missing_codex_gemini_cli",
+            )
 
     return {
         "provider": provider_id,
-        "api_key": "copilot-acp" if provider_id == "copilot-acp" else "codex-cerebras-cli",
+        "api_key": {
+            "copilot-acp": "copilot-acp",
+            "codex-cerebras-cli": "codex-cerebras-cli",
+            "codex-gemini-cli": "codex-gemini-cli",
+        }.get(provider_id, provider_id),
         "base_url": base_url.rstrip("/"),
         "command": resolved_command or command,
         "args": args,
