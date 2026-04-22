@@ -17,6 +17,9 @@ from typing import Any
 
 CODEX_CEREBRAS_MARKER_BASE_URL = "codex+cerebras://local"
 _DEFAULT_TIMEOUT_SECONDS = 1800.0
+_PLANNER_BRIEF_PREFIX = "Planner brief for the execution model:"
+_MAX_MESSAGE_CHARS = 4000
+_MAX_TRANSCRIPT_MESSAGES = 6
 
 
 def _render_message_content(content: Any) -> str:
@@ -42,6 +45,43 @@ def _render_message_content(content: Any) -> str:
     return str(content).strip()
 
 
+def _trim_message_text(text: str) -> str:
+    cleaned = str(text or "").strip()
+    if len(cleaned) <= _MAX_MESSAGE_CHARS:
+        return cleaned
+    return cleaned[:_MAX_MESSAGE_CHARS].rstrip() + "\n...[truncated]"
+
+
+def _select_relevant_messages(messages: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    collected: list[tuple[str, str]] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role") or "context").strip().lower()
+        if role == "system":
+            continue
+        rendered = _trim_message_text(_render_message_content(message.get("content")))
+        if rendered:
+            collected.append((role, rendered))
+
+    if not collected:
+        return []
+
+    planner_indices = [
+        idx for idx, (role, rendered) in enumerate(collected)
+        if role == "user" and rendered.startswith(_PLANNER_BRIEF_PREFIX)
+    ]
+    if planner_indices:
+        collected = collected[planner_indices[-1]:]
+
+    deduped: list[tuple[str, str]] = []
+    for item in collected:
+        if not deduped or deduped[-1] != item:
+            deduped.append(item)
+
+    return deduped[-_MAX_TRANSCRIPT_MESSAGES:]
+
+
 def _format_messages_as_prompt(messages: list[dict[str, Any]], model: str | None = None) -> str:
     sections: list[str] = [
         "You are being called as the active Codex execution backend for Hermes.",
@@ -52,19 +92,13 @@ def _format_messages_as_prompt(messages: list[dict[str, Any]], model: str | None
         sections.append(f"Requested model hint: {model}")
 
     transcript: list[str] = []
-    for message in messages:
-        if not isinstance(message, dict):
-            continue
-        role = str(message.get("role") or "context").strip().lower()
+    for role, rendered in _select_relevant_messages(messages):
         label = {
-            "system": "System",
             "user": "User",
             "assistant": "Assistant",
             "tool": "Tool",
         }.get(role, role.title())
-        rendered = _render_message_content(message.get("content"))
-        if rendered:
-            transcript.append(f"{label}:\n{rendered}")
+        transcript.append(f"{label}:\n{rendered}")
 
     if transcript:
         sections.append("Conversation transcript:\n\n" + "\n\n".join(transcript))
