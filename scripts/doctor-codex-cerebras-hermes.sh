@@ -59,4 +59,26 @@ import agent.codex_cerebras_cli_client as bridge
 import agent.codex_gemini_cli_client as gemini_bridge
 print(f"  bridge marker: {bridge.CODEX_CEREBRAS_MARKER_BASE_URL}")
 print(f"  gemini bridge marker: {gemini_bridge.CODEX_GEMINI_MARKER_BASE_URL}")
+
+from langgraph_codex_orchestrator.graph import build_graph
+graph = build_graph()
+print(f"  orchestrator graph: {type(graph).__name__}")
+
+from langgraph_codex_orchestrator.quota import QuotaStore
+quota = QuotaStore().summary()
+print(f"  quota families: {', '.join(sorted(quota.keys()))}")
 PY
+
+echo "Checking hermes-orchestrator CLI..."
+if command -v hermes-orchestrator >/dev/null 2>&1; then
+  echo "  ok: $(command -v hermes-orchestrator)"
+else
+  echo "  missing: hermes-orchestrator is not on PATH"
+fi
+
+echo "Checking TUI build..."
+if [[ -x "$ROOT/ui-tui/dist/entry.js" ]]; then
+  echo "  ok: $ROOT/ui-tui/dist/entry.js"
+else
+  echo "  missing: run npm --prefix $ROOT/ui-tui run build"
+fi
