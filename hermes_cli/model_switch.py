@@ -703,7 +703,7 @@ def switch_model(
     new_model = normalize_model_for_provider(new_model, target_provider)
 
     # --- Validate ---
-    if runtime_provider in {"codex-cerebras-cli", "codex-gemini-cli"}:
+    if runtime_provider in {"codex-cerebras-cli", "codex-gemini-cli", "codex-nvidia-cli", "codex-mistral-cli"}:
         validation = {
             "accepted": True,
             "persist": True,

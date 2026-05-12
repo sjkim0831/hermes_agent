@@ -5,6 +5,12 @@ import { flat } from '../lib/text.js'
 import type { Theme } from '../theme.js'
 import type { PanelSection, SessionInfo } from '../types.js'
 
+const clampTerminalColumns = (value: number | undefined, fallback = 120) => {
+  const n = Number(value)
+
+  return Number.isFinite(n) && n >= 20 && n <= 320 ? Math.floor(n) : fallback
+}
+
 export function ArtLines({ lines }: { lines: [string, string][] }) {
   return (
     <>
@@ -18,7 +24,7 @@ export function ArtLines({ lines }: { lines: [string, string][] }) {
 }
 
 export function Banner({ t }: { t: Theme }) {
-  const cols = useStdout().stdout?.columns ?? 80
+  const cols = clampTerminalColumns(useStdout().stdout?.columns, 80)
   const logoLines = logo(t.color, t.bannerLogo || undefined)
 
   return (
@@ -37,7 +43,7 @@ export function Banner({ t }: { t: Theme }) {
 }
 
 export function SessionPanel({ info, sid, t }: SessionPanelProps) {
-  const cols = useStdout().stdout?.columns ?? 100
+  const cols = clampTerminalColumns(useStdout().stdout?.columns, 100)
   const heroLines = caduceus(t.color, t.bannerHero || undefined)
   const leftW = Math.min((artWidth(heroLines) || CADUCEUS_WIDTH) + 4, Math.floor(cols * 0.4))
   const wide = cols >= 90 && leftW + 40 < cols

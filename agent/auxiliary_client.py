@@ -1836,6 +1836,62 @@ def resolve_provider_client(
             logger.debug("resolve_provider_client: %s (%s)", provider, final_model)
             return (_to_async_client(client, final_model) if async_mode
                     else (client, final_model))
+        if provider == "codex-nvidia-cli":
+            api_key = str(creds.get("api_key", "")).strip()
+            base_url = str(creds.get("base_url", "")).strip()
+            command = str(creds.get("command", "")).strip() or None
+            args = list(creds.get("args") or [])
+            if not final_model:
+                logger.warning(
+                    "resolve_provider_client: codex-nvidia-cli requested but no model "
+                    "was provided or configured"
+                )
+                return None, None
+            if not api_key:
+                logger.warning(
+                    "resolve_provider_client: codex-nvidia-cli requested but API key "
+                    "resolution failed"
+                )
+                return None, None
+            from agent.codex_nvidia_cli_client import CodexNvidiaCLIClient
+
+            client = CodexNvidiaCLIClient(
+                api_key=api_key,
+                base_url=base_url,
+                command=command,
+                args=args,
+            )
+            logger.debug("resolve_provider_client: %s (%s)", provider, final_model)
+            return (_to_async_client(client, final_model) if async_mode
+                    else (client, final_model))
+        if provider == "codex-mistral-cli":
+            api_key = str(creds.get("api_key", "")).strip()
+            base_url = str(creds.get("base_url", "")).strip()
+            command = str(creds.get("command", "")).strip() or None
+            args = list(creds.get("args") or [])
+            if not final_model:
+                logger.warning(
+                    "resolve_provider_client: codex-mistral-cli requested but no model "
+                    "was provided or configured"
+                )
+                return None, None
+            if not api_key:
+                logger.warning(
+                    "resolve_provider_client: codex-mistral-cli requested but API key "
+                    "resolution failed"
+                )
+                return None, None
+            from agent.codex_mistral_cli_client import CodexMistralCLIClient
+
+            client = CodexMistralCLIClient(
+                api_key=api_key,
+                base_url=base_url,
+                command=command,
+                args=args,
+            )
+            logger.debug("resolve_provider_client: %s (%s)", provider, final_model)
+            return (_to_async_client(client, final_model) if async_mode
+                    else (client, final_model))
         logger.warning("resolve_provider_client: external-process provider %s not "
                        "directly supported", provider)
         return None, None

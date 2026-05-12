@@ -48,6 +48,13 @@ HERMES_OVERLAYS: Dict[str, HermesOverlay] = {
         extra_env_vars=("OPENAI_API_KEY",),
         base_url_env_var="OPENROUTER_BASE_URL",
     ),
+    "codex-mercury2": HermesOverlay(
+        transport="openai_chat",
+        auth_type="api_key",
+        base_url_override="https://api.inceptionlabs.ai/v1",
+        base_url_env_var="CODEX_MERCURY2_BASE_URL",
+        extra_env_vars=("INCEPTION_API_KEY",),
+    ),
     "nous": HermesOverlay(
         transport="openai_chat",
         auth_type="oauth_device_code",
@@ -199,6 +206,11 @@ ALIASES: Dict[str, str] = {
     "fireworks-ai": "fireworks",
     "cerebras-ai": "cerebras",
 
+    # codex-mercury2 (Inception Labs Mercury 2)
+    "codex-mercury2": "codex-mercury2",
+    "mercury2": "codex-mercury2",
+    "mercury-2": "codex-mercury2",
+
     # nvidia
     "nim": "nvidia",
     "nvidia-nim": "nvidia",
@@ -299,6 +311,9 @@ _LABEL_OVERRIDES: Dict[str, str] = {
     "local": "Local endpoint",
     "bedrock": "AWS Bedrock",
     "ollama-cloud": "Ollama Cloud",
+    "codex-mercury2": "Codex Mercury 2",
+    "mercury2": "Codex Mercury 2",
+    "mercury-2": "Codex Mercury 2",
 }
 
 

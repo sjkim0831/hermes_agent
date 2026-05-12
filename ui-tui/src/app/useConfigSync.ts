@@ -13,7 +13,7 @@ import { asRpcResult } from '../lib/rpc.js'
 import { turnController } from './turnController.js'
 import { patchUiState } from './uiStore.js'
 
-const MTIME_POLL_MS = 5000
+const MTIME_POLL_MS = 300_000
 
 const quietRpc = async <T extends Record<string, any> = Record<string, any>>(
   gw: GatewayClient,

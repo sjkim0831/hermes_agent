@@ -19,7 +19,13 @@ const LOGO_WIDTH = 98
 const TAGLINE = `${DIM}⚕ Nous Research · Messenger of the Digital Gods${RESET}`
 const FALLBACK = `\x1b[1m${GOLD}⚕ NOUS HERMES${RESET}`
 
-export function bootBanner(cols: number = process.stdout.columns || 80): string {
+const clampBannerColumns = (value: number | undefined) => {
+  const n = Number(value)
+
+  return Number.isFinite(n) && n >= 20 && n <= 320 ? Math.floor(n) : 120
+}
+
+export function bootBanner(cols: number = clampBannerColumns(process.stdout.columns)): string {
   const body = cols >= LOGO_WIDTH ? LOGO.map((text, i) => `${GRADIENT[i]}${text}${RESET}`).join('\n') : FALLBACK
 
   return `\n${body}\n${TAGLINE}\n\n`

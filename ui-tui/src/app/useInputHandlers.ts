@@ -17,6 +17,11 @@ import { patchTurnState } from './turnStore.js'
 import { getUiState, patchUiState } from './uiStore.js'
 
 const isCtrl = (key: { ctrl: boolean }, ch: string, target: string) => key.ctrl && ch.toLowerCase() === target
+const clampTerminalRows = (value: number | undefined) => {
+  const n = Number(value)
+
+  return Number.isFinite(n) && n >= 8 && n <= 120 ? Math.floor(n) : 30
+}
 
 export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
   const { actions, composer, gateway, terminal, voice, wheelStep } = ctx
@@ -24,7 +29,7 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
 
   const overlay = useStore($overlayState)
   const isBlocked = useStore($isBlocked)
-  const pagerPageSize = Math.max(5, (terminal.stdout?.rows ?? 24) - 6)
+  const pagerPageSize = Math.max(5, clampTerminalRows(terminal.stdout?.rows) - 6)
 
   const copySelection = () => {
     const text = terminal.selection.copySelection()
@@ -230,7 +235,7 @@ export function useInputHandlers(ctx: InputHandlerContext): InputHandlerResult {
     }
 
     if (key.pageUp || key.pageDown) {
-      const viewport = terminal.scrollRef.current?.getViewportHeight() ?? Math.max(6, (terminal.stdout?.rows ?? 24) - 8)
+      const viewport = terminal.scrollRef.current?.getViewportHeight() ?? Math.max(6, clampTerminalRows(terminal.stdout?.rows) - 8)
       const step = Math.max(4, viewport - 2)
 
       return terminal.scrollWithSelection(key.pageUp ? -step : step)

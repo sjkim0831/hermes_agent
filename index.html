@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>아이 잘 돼</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #fce4ec, #f3e5f5, #e8eaf6, #e0f7fa);
+            background-size: 400% 400%;
+            animation: gradientShift 12s ease infinite;
+            font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', sans-serif;
+            overflow: hidden;
+        }
+
+        @keyframes gradientShift {
+            0%   { background-position: 0% 50%; }
+            50%  { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        h1 {
+            font-size: 5rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #e91e63, #9c27b0, #3f51b5, #00bcd4);
+            background-size: 300% 300%;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            animation: gradientText 8s ease infinite;
+            text-align: center;
+            letter-spacing: 0.05em;
+            filter: drop-shadow(0 4px 12px rgba(156, 39, 176, 0.3));
+            user-select: none;
+        }
+
+        @keyframes gradientText {
+            0%   { background-position: 0% 50%; }
+            50%  { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+
+        /* Floating sparkles */
+        .sparkle {
+            position: fixed;
+            pointer-events: none;
+            font-size: 1.5rem;
+            opacity: 0;
+            animation: floatUp 4s ease-in infinite;
+        }
+
+        .sparkle:nth-child(1) { left: 10%; animation-delay: 0s; font-size: 1.2rem; }
+        .sparkle:nth-child(2) { left: 25%; animation-delay: 1s; font-size: 1.8rem; }
+        .sparkle:nth-child(3) { left: 40%; animation-delay: 2s; font-size: 1rem; }
+        .sparkle:nth-child(4) { left: 55%; animation-delay: 0.5s; font-size: 2rem; }
+        .sparkle:nth-child(5) { left: 70%; animation-delay: 1.5s; font-size: 1.3rem; }
+        .sparkle:nth-child(6) { left: 85%; animation-delay: 3s; font-size: 1.6rem; }
+        .sparkle:nth-child(7) { left: 95%; animation-delay: 2.5s; font-size: 1.1rem; }
+        .sparkle:nth-child(8) { left: 5%;  animation-delay: 3.5s; font-size: 1.4rem; }
+
+        @keyframes floatUp {
+            0%   { transform: translateY(100vh) scale(0); opacity: 0; }
+            20%  { opacity: 0.8; }
+            100% { transform: translateY(-20vh) scale(1.2); opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+    <div class="sparkle">✦</div>
+    <div class="sparkle">☆</div>
+    <div class="sparkle">✧</div>
+    <div class="sparkle">★</div>
+    <div class="sparkle">✦</div>
+    <div class="sparkle">☆</div>
+    <div class="sparkle">✧</div>
+    <div class="sparkle">★</div>
+    <h1>아이 잘 돼</h1>
+</body>
+</html>

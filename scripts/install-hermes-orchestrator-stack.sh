@@ -16,7 +16,8 @@ set -euo pipefail
 #   HERMES_VENV=/opt/util/hermes/venv
 #   SKIP_NPM_BUILD=1
 #   SKIP_CODEX_LAUNCHERS=1
-#   CEREBRAS_ACCOUNT_COUNT=19
+#   SKIP_OLLAMA_STACK=1
+#   CEREBRAS_ACCOUNT_COUNT=20
 #   GEMINI_ACCOUNT_COUNT=19
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -58,9 +59,18 @@ python -m pip install -e '.[orchestration]'
 if [[ "${SKIP_CODEX_LAUNCHERS:-0}" != "1" ]]; then
   log "installing codex-cerebras/codex-gemini launchers and provider config"
   INSTALL_CODEX_CEREBRAS=1 INSTALL_CODEX_GEMINI=1 "$ROOT/scripts/install-hermes-codex-cerebras.sh"
+  log "installing Cerebras account-specific Codex launchers"
+  "$ROOT/scripts/install-codex-cerebras-account-launchers.sh"
 else
   log "skipping codex launchers by SKIP_CODEX_LAUNCHERS=1"
   INSTALL_CODEX_CEREBRAS=0 INSTALL_CODEX_GEMINI=0 "$ROOT/scripts/install-hermes-codex-cerebras.sh"
+fi
+
+if [[ "${SKIP_OLLAMA_STACK:-0}" != "1" ]]; then
+  log "installing Ollama sidecar routing"
+  bash "$ROOT/scripts/install-hermes-ollama-stack.sh"
+else
+  log "skipping Ollama sidecar routing by SKIP_OLLAMA_STACK=1"
 fi
 
 if [[ "${SKIP_NPM_BUILD:-0}" != "1" ]]; then
@@ -88,8 +98,13 @@ Useful TUI commands:
   /routing
   /orchestrate --dry-run <task>
   /orchestrate <task>
+  /orchestrate4 start <task>
   /quota
   /quota reset cerebras
+
+Cerebras account launchers:
+  codex-cerebras-101-qwen
+  codex-cerebras-101-llama31-8b
 
 Secrets live in:
   $HERMES_HOME/.env

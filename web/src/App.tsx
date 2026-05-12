@@ -7,6 +7,7 @@ import {
   Wrench, Zap, Heart, Star, Code, Eye,
 } from "lucide-react";
 import StatusPage from "@/pages/StatusPage";
+import OrchestratorPage from "@/pages/OrchestratorPage";
 import ConfigPage from "@/pages/ConfigPage";
 import EnvPage from "@/pages/EnvPage";
 import SessionsPage from "@/pages/SessionsPage";
@@ -34,6 +35,7 @@ interface NavItem {
 const BUILTIN_NAV: NavItem[] = [
   { path: "/", labelKey: "status", label: "Status", icon: Activity },
   { path: "/sessions", labelKey: "sessions", label: "Sessions", icon: MessageSquare },
+  { path: "/orchestrator", label: "Orchestrator", icon: Eye },
   { path: "/analytics", labelKey: "analytics", label: "Analytics", icon: BarChart3 },
   { path: "/logs", labelKey: "logs", label: "Logs", icon: FileText },
   { path: "/cron", labelKey: "cron", label: "Cron", icon: Clock },
@@ -159,6 +161,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<StatusPage />} />
           <Route path="/sessions" element={<SessionsPage />} />
+          <Route path="/orchestrator" element={<OrchestratorPage />} />
           <Route path="/analytics" element={<AnalyticsPage />} />
           <Route path="/logs" element={<LogsPage />} />
           <Route path="/cron" element={<CronPage />} />

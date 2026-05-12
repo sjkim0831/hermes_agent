@@ -72,7 +72,7 @@ export function AlternateScreen(t0: Props) {
   }
 
   useInsertionEffect(t2, t3)
-  const t4 = size?.rows ?? 24
+  const t4 = clampTerminalRows(size?.rows)
   let t5
 
   if ($[4] !== children || $[5] !== t4) {

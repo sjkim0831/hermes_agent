@@ -1978,7 +1978,7 @@ def get_compatible_custom_providers(
         if entry is None:
             return
         provider_key = str(entry.get("provider_key", "") or "").strip().lower()
-        provider_key_is_shared_backend = provider_key in {"codex-cerebras-cli", "codex-gemini-cli"}
+        provider_key_is_shared_backend = provider_key in {"codex-cerebras-cli", "codex-gemini-cli", "codex-nvidia-cli", "codex-mistral-cli"}
         name = str(entry.get("name", "") or "").strip().lower()
         base_url = str(entry.get("base_url", "") or "").strip().rstrip("/").lower()
         model = str(entry.get("model", "") or "").strip().lower()

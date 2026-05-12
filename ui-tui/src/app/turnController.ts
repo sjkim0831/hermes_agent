@@ -1,5 +1,5 @@
 import { REASONING_PULSE_MS, STREAM_BATCH_MS } from '../config/timing.js'
-import { MAX_REASONING_CHARS, MAX_STREAM_SEGMENTS } from '../config/limits.js'
+import { MAX_REASONING_CHARS, MAX_STREAM_CHARS, MAX_STREAM_SEGMENTS, MAX_TOOL_CONTEXT_CHARS } from '../config/limits.js'
 import type { SessionInterruptResponse, SubagentEventPayload } from '../gatewayTypes.js'
 import { hasReasoningTag, splitReasoning } from '../lib/reasoning.js'
 import {
@@ -20,15 +20,20 @@ const ACTIVITY_LIMIT = 8
 const TRAIL_LIMIT = 8
 const TRUNCATED_PREFIX = '...[truncated]\n'
 
-const capReasoning = (text: string) => {
-  if (text.length <= MAX_REASONING_CHARS) {
+const capTail = (text: string, limit: number) => {
+  if (text.length <= limit) {
     return text
   }
 
-  const tailBudget = Math.max(0, MAX_REASONING_CHARS - TRUNCATED_PREFIX.length)
+  const tailBudget = Math.max(0, limit - TRUNCATED_PREFIX.length)
 
   return `${TRUNCATED_PREFIX}${text.slice(-tailBudget)}`
 }
+
+const capReasoning = (text: string) => capTail(text, MAX_REASONING_CHARS)
+const capStream = (text: string) => capTail(text, MAX_STREAM_CHARS)
+const capToolText = (text: string) => capTail(text, MAX_TOOL_CONTEXT_CHARS)
+const capToolLines = (items: string[]) => items.slice(-MAX_STREAM_SEGMENTS).map(capToolText)
 
 const capSegments = (items: Msg[]) => items.slice(-MAX_STREAM_SEGMENTS)
 
@@ -225,8 +230,8 @@ class TurnController {
     const savedReasoning = [existingReasoning, existingReasoning ? '' : split.reasoning].filter(Boolean).join('\n\n')
     const savedReasoningTokens = savedReasoning ? estimateTokensRough(savedReasoning) : 0
     const savedToolTokens = this.toolTokenAcc
-    const tools = this.pendingSegmentTools
-    const finalMessages = [...this.segmentMessages]
+    const tools = capToolLines(this.pendingSegmentTools)
+    const finalMessages = capSegments([...this.segmentMessages])
 
     if (finalText) {
       finalMessages.push({
@@ -259,7 +264,7 @@ class TurnController {
       return
     }
 
-    this.bufRef = rendered ?? this.bufRef + text
+    this.bufRef = capStream(rendered ?? this.bufRef + text)
 
     if (getUiState().streaming) {
       this.scheduleStreaming()
@@ -299,7 +304,7 @@ class TurnController {
     const line = buildToolTrailLine(name, done?.context || '', Boolean(error), error || summary || '')
 
     this.activeTools = this.activeTools.filter(tool => tool.id !== toolId)
-    this.pendingSegmentTools = [...this.pendingSegmentTools, line]
+    this.pendingSegmentTools = capToolLines([...this.pendingSegmentTools, line])
 
     const next = this.turnTools.filter(item => !sameToolTrailGroup(label, item))
 
@@ -322,7 +327,7 @@ class TurnController {
       return
     }
 
-    this.activeTools = this.activeTools.map((tool, i) => (i === index ? { ...tool, context: preview } : tool))
+    this.activeTools = this.activeTools.map((tool, i) => (i === index ? { ...tool, context: capToolText(preview) } : tool))
 
     if (this.toolProgressTimer) {
       return
@@ -339,10 +344,11 @@ class TurnController {
     this.pruneTransient()
     this.endReasoningPhase()
 
-    const sample = `${name} ${context}`.trim()
+    const safeContext = capToolText(context)
+    const sample = `${name} ${safeContext}`.trim()
 
     this.toolTokenAcc += sample ? estimateTokensRough(sample) : 0
-    this.activeTools = [...this.activeTools, { context, id: toolId, name, startedAt: Date.now() }]
+    this.activeTools = [...this.activeTools, { context: safeContext, id: toolId, name, startedAt: Date.now() }]
 
     patchTurnState({ toolTokens: this.toolTokenAcc, tools: this.activeTools })
   }
@@ -391,7 +397,7 @@ class TurnController {
       this.streamTimer = null
       const raw = this.bufRef.trimStart()
       const visible = hasReasoningTag(raw) ? splitReasoning(raw).text : raw
-      patchTurnState({ streaming: visible })
+      patchTurnState({ streaming: capStream(visible) })
     }, STREAM_BATCH_MS)
   }
 

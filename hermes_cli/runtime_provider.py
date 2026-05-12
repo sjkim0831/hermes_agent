@@ -16,6 +16,8 @@ from hermes_cli.auth import (
     DEFAULT_CODEX_BASE_URL,
     DEFAULT_CODEX_CEREBRAS_CLI_BASE_URL,
     DEFAULT_CODEX_GEMINI_CLI_BASE_URL,
+    DEFAULT_CODEX_NVIDIA_CLI_BASE_URL,
+    DEFAULT_CODEX_MISTRAL_CLI_BASE_URL,
     DEFAULT_QWEN_BASE_URL,
     PROVIDER_REGISTRY,
     _agent_key_is_usable,
@@ -457,6 +459,42 @@ def _resolve_named_custom_runtime(
             "provider": provider_key,
             "api_mode": "chat_completions",
             "base_url": process_creds.get("base_url", DEFAULT_CODEX_GEMINI_CLI_BASE_URL).rstrip("/"),
+            "api_key": api_key or "no-key-required",
+            "command": process_creds.get("command", ""),
+            "args": list(process_creds.get("args") or []),
+            "source": (
+                f"credential_pool:{(pooled_custom or {}).get('label') or custom_provider.get('name', requested_provider)}"
+                if pooled_custom else f"custom_provider:{custom_provider.get('name', requested_provider)}"
+            ),
+        }
+        model_name = custom_provider.get("model")
+        if model_name:
+            result["model"] = model_name
+        return result
+    if provider_key == "codex-nvidia-cli":
+        process_creds = resolve_external_process_provider_credentials(provider_key)
+        result = {
+            "provider": provider_key,
+            "api_mode": "chat_completions",
+            "base_url": process_creds.get("base_url", DEFAULT_CODEX_NVIDIA_CLI_BASE_URL).rstrip("/"),
+            "api_key": api_key or "no-key-required",
+            "command": process_creds.get("command", ""),
+            "args": list(process_creds.get("args") or []),
+            "source": (
+                f"credential_pool:{(pooled_custom or {}).get('label') or custom_provider.get('name', requested_provider)}"
+                if pooled_custom else f"custom_provider:{custom_provider.get('name', requested_provider)}"
+            ),
+        }
+        model_name = custom_provider.get("model")
+        if model_name:
+            result["model"] = model_name
+        return result
+    if provider_key == "codex-mistral-cli":
+        process_creds = resolve_external_process_provider_credentials(provider_key)
+        result = {
+            "provider": provider_key,
+            "api_mode": "chat_completions",
+            "base_url": process_creds.get("base_url", DEFAULT_CODEX_MISTRAL_CLI_BASE_URL).rstrip("/"),
             "api_key": api_key or "no-key-required",
             "command": process_creds.get("command", ""),
             "args": list(process_creds.get("args") or []),

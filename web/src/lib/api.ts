@@ -36,6 +36,8 @@ async function getSessionToken(): Promise<string> {
 
 export const api = {
   getStatus: () => fetchJSON<StatusResponse>("/api/status"),
+  getOrchestratorCurrent: () =>
+    fetchJSON<OrchestratorCurrentResponse>("/api/orchestrator/current"),
   getSessions: (limit = 20, offset = 0) =>
     fetchJSON<PaginatedSessions>(`/api/sessions?limit=${limit}&offset=${offset}`),
   getSessionMessages: (id: string) =>
@@ -223,6 +225,58 @@ export interface StatusResponse {
   latest_config_version: number;
   release_date: string;
   version: string;
+}
+
+export interface OrchestratorShard {
+  attempts: number;
+  credential_label: string;
+  duration_seconds: number;
+  error: string;
+  estimated_seconds: number;
+  instruction: string;
+  model: string;
+  ownership: string;
+  provider_id: string;
+  rate_limited: boolean;
+  shard_index: number;
+  stage_status: string;
+  status: string;
+  title: string;
+  tokens_used: number;
+  role: string;
+}
+
+export interface OrchestratorStage {
+  completed_shards: number;
+  failed_shards: number;
+  pending_shards: number;
+  planned_workers: number;
+  provider_family: string;
+  retrying_shards: number;
+  retried_shards: number;
+  role: string;
+  running_shards: number;
+  shards: OrchestratorShard[];
+  status: string;
+}
+
+export interface OrchestratorCurrentResponse {
+  active_stage: OrchestratorStage | null;
+  completion_status: string;
+  cwd: string;
+  difficulty: number;
+  estimated_tokens: number;
+  quota: unknown;
+  recent_events: Array<Record<string, unknown>>;
+  run_id: string;
+  shards: OrchestratorShard[];
+  stage_order: string[];
+  stages: Record<string, OrchestratorStage>;
+  status: string;
+  task: string;
+  task_type: string;
+  telemetry: unknown;
+  updated_at: string | null;
 }
 
 export interface SessionInfo {

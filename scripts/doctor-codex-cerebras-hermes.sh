@@ -9,6 +9,8 @@ if command -v codex-cerebras >/dev/null 2>&1; then
 else
   echo "  missing: run $ROOT/scripts/install-codex-cerebras.sh"
 fi
+account_launchers="$({ compgen -c codex-cerebras- || true; } | grep -E '^codex-cerebras-[0-9]+$' | sort -u | wc -l | tr -d ' ')"
+echo "  account launchers: ${account_launchers:-0}"
 
 echo "Checking codex-gemini launcher..."
 if command -v codex-gemini >/dev/null 2>&1; then

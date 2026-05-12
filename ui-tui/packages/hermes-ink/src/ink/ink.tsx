@@ -127,7 +127,19 @@ function makeAltScreenParkPatch(terminalRows: number) {
   })
 }
 
-export type Options = {
+export const clampTerminalColumns = (value: number | undefined) => {
+  const n = Number(value)
+
+  return Number.isFinite(n) && n >= 20 && n <= 320 ? Math.floor(n) : 120
+}
+
+const clampTerminalRows = (value: number | undefined) => {
+  const n = Number(value)
+
+  return Number.isFinite(n) && n >= 8 && n <= 120 ? Math.floor(n) : 30
+}
+
+type Options = {
   stdout: NodeJS.WriteStream
   stdin: NodeJS.ReadStream
   stderr: NodeJS.WriteStream
@@ -262,8 +274,8 @@ export default class Ink {
       stdout: options.stdout,
       stderr: options.stderr
     }
-    this.terminalColumns = options.stdout.columns || 80
-    this.terminalRows = options.stdout.rows || 24
+    this.terminalColumns = clampTerminalColumns(options.stdout.columns)
+    this.terminalRows = clampTerminalRows(options.stdout.rows)
     this.altScreenParkPatch = makeAltScreenParkPatch(this.terminalRows)
     this.stylePool = new StylePool()
     this.charPool = new CharPool()
@@ -416,8 +428,8 @@ export default class Ink {
   // one microtask per burst: vscode fires many SIGWINCHes per panel
   // drag, each ~80ms uncoalesced = event loop visibly locks up.
   private handleResize = () => {
-    const cols = this.options.stdout.columns || 80
-    const rows = this.options.stdout.rows || 24
+    const cols = clampTerminalColumns(this.options.stdout.columns)
+    const rows = clampTerminalRows(this.options.stdout.rows)
 
     // Terminals often emit 2+ resize events for one user action (window
     // settling). Same-dimension events are no-ops; skip to avoid redundant
@@ -587,8 +599,8 @@ export default class Ink {
     // an extra React re-render cycle.
     flushInteractionTime()
     const renderStart = performance.now()
-    const terminalWidth = this.options.stdout.columns || 80
-    const terminalRows = this.options.stdout.rows || 24
+    const terminalWidth = clampTerminalColumns(this.options.stdout.columns)
+    const terminalRows = clampTerminalRows(this.options.stdout.rows)
 
     const frame = this.renderer({
       frontFrame: this.frontFrame,

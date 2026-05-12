@@ -149,6 +149,9 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
         "llama3.1-8b",
         "qwen-3-235b-a22b-instruct-2507",
     ],
+    "codex-mercury2": [
+        "mercury-2",
+    ],
     "zai": [
         "glm-5.1",
         "glm-5",
@@ -567,6 +570,7 @@ CANONICAL_PROVIDERS: list[ProviderEntry] = [
     ProviderEntry("groq",           "Groq",                     "Groq (ultra-fast OpenAI-compatible inference)"),
     ProviderEntry("fireworks",      "Fireworks AI",             "Fireworks AI (open model hosting — OpenAI-compatible)"),
     ProviderEntry("cerebras",       "Cerebras",                 "Cerebras (wafer-scale inference — OpenAI-compatible)"),
+    ProviderEntry("codex-mercury2", "Codex Mercury 2",           "Codex Mercury 2 (Inception Labs mercury-2 model)"),
     ProviderEntry("deepseek",       "DeepSeek",                 "DeepSeek (DeepSeek-V3, R1, coder — direct API)"),
     ProviderEntry("xai",            "xAI",                      "xAI (Grok models — direct API)"),
     ProviderEntry("zai",            "Z.AI / GLM",               "Z.AI / GLM (Zhipu AI direct API)"),
@@ -606,6 +610,9 @@ _PROVIDER_ALIASES = {
     "groq-cloud": "groq",
     "fireworks-ai": "fireworks",
     "cerebras-ai": "cerebras",
+    "codex-mercury2": "codex-mercury2",
+    "mercury2": "codex-mercury2",
+    "mercury-2": "codex-mercury2",
     "kimi": "kimi-coding",
     "moonshot": "kimi-coding",
     "kimi-cn": "kimi-coding-cn",

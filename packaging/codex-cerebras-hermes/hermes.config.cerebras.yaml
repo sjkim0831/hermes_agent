@@ -174,3 +174,12 @@ custom_providers:
   - llama3.1-8b
   api_mode: chat_completions
   provider_key: codex-cerebras-cli
+- name: Cerebras API 120
+  base_url: https://api.cerebras.ai/v1
+  key_env: CEREBRAS_API_KEY_120
+  model: qwen-3-235b-a22b-instruct-2507
+  models:
+  - qwen-3-235b-a22b-instruct-2507
+  - llama3.1-8b
+  api_mode: chat_completions
+  provider_key: codex-cerebras-cli

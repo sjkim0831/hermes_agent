@@ -1,4 +1,4 @@
-import { LONG_MSG } from '../config/limits.js'
+import { LONG_MSG, MAX_TRANSCRIPT_LOAD_CHARS, MAX_TRANSCRIPT_MESSAGE_CHARS, MAX_TOOL_CONTEXT_CHARS } from '../config/limits.js'
 import { buildToolTrailLine, fmtK } from '../lib/text.js'
 import type { Msg, SessionInfo } from '../types.js'
 
@@ -24,6 +24,19 @@ export const userDisplay = (text: string) => {
   return `${prefix || '(message)'} [long message]`
 }
 
+const truncateMiddle = (text: string, limit: number) => {
+  if (text.length <= limit) {
+    return text
+  }
+
+  const marker = '\n...[truncated for TUI]\n'
+  const budget = Math.max(0, limit - marker.length)
+  const head = Math.floor(budget * 0.35)
+  const tail = Math.max(0, budget - head)
+
+  return `${text.slice(0, head)}${marker}${text.slice(-tail)}`
+}
+
 export const toTranscriptMessages = (rows: unknown): Msg[] => {
   if (!Array.isArray(rows)) {
     return []
@@ -31,8 +44,9 @@ export const toTranscriptMessages = (rows: unknown): Msg[] => {
 
   const out: Msg[] = []
   let pending: string[] = []
+  let totalChars = 0
 
-  for (const row of rows) {
+  for (const row of rows.slice(-120)) {
     if (!row || typeof row !== 'object') {
       continue
     }
@@ -40,7 +54,8 @@ export const toTranscriptMessages = (rows: unknown): Msg[] => {
     const { context, name, role, text } = row as TranscriptRow
 
     if (role === 'tool') {
-      pending.push(buildToolTrailLine(name ?? 'tool', context ?? ''))
+      const line = buildToolTrailLine(name ?? 'tool', truncateMiddle(context ?? '', MAX_TOOL_CONTEXT_CHARS))
+      pending = [...pending, line].slice(-8)
 
       continue
     }
@@ -49,11 +64,21 @@ export const toTranscriptMessages = (rows: unknown): Msg[] => {
       continue
     }
 
+    const clipped = truncateMiddle(text, MAX_TRANSCRIPT_MESSAGE_CHARS)
+    const size = clipped.length + pending.join('').length
+
+    if (totalChars + size > MAX_TRANSCRIPT_LOAD_CHARS && out.length > 0) {
+      out.splice(0, Math.max(1, Math.ceil(out.length / 3)))
+      totalChars = out.reduce((sum, msg) => sum + (msg.text?.length ?? 0) + (msg.tools?.join('').length ?? 0), 0)
+    }
+
     if (role === 'assistant') {
-      out.push({ role, text, ...(pending.length && { tools: pending }) })
+      out.push({ role, text: clipped, ...(pending.length && { tools: pending }) })
+      totalChars += size
       pending = []
     } else if (role === 'user' || role === 'system') {
-      out.push({ role, text })
+      out.push({ role, text: clipped })
+      totalChars += clipped.length
       pending = []
     }
   }

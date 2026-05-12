@@ -73,6 +73,8 @@ DEFAULT_COPILOT_ACP_BASE_URL = "acp://copilot"
 DEFAULT_OLLAMA_CLOUD_BASE_URL = "https://ollama.com/v1"
 DEFAULT_CODEX_CEREBRAS_CLI_BASE_URL = "codex+cerebras://local"
 DEFAULT_CODEX_GEMINI_CLI_BASE_URL = "codex+gemini://local"
+DEFAULT_CODEX_NVIDIA_CLI_BASE_URL = "codex+nvidia://local"
+DEFAULT_CODEX_MISTRAL_CLI_BASE_URL = "codex+mistral://local"
 CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CODEX_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
 CODEX_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 120
@@ -162,6 +164,20 @@ PROVIDER_REGISTRY: Dict[str, ProviderConfig] = {
         auth_type="external_process",
         inference_base_url=DEFAULT_CODEX_GEMINI_CLI_BASE_URL,
         base_url_env_var="HERMES_CODEX_GEMINI_BASE_URL",
+    ),
+    "codex-nvidia-cli": ProviderConfig(
+        id="codex-nvidia-cli",
+        name="Codex NVIDIA CLI",
+        auth_type="external_process",
+        inference_base_url=DEFAULT_CODEX_NVIDIA_CLI_BASE_URL,
+        base_url_env_var="HERMES_CODEX_NVIDIA_BASE_URL",
+    ),
+    "codex-mistral-cli": ProviderConfig(
+        id="codex-mistral-cli",
+        name="Codex Mistral CLI",
+        auth_type="external_process",
+        inference_base_url=DEFAULT_CODEX_MISTRAL_CLI_BASE_URL,
+        base_url_env_var="HERMES_CODEX_MISTRAL_BASE_URL",
     ),
     "gemini": ProviderConfig(
         id="gemini",
@@ -2623,6 +2639,14 @@ def get_external_process_provider_status(provider_id: str) -> Dict[str, Any]:
         command = os.getenv("HERMES_CODEX_GEMINI_COMMAND", "").strip() or "codex-gemini"
         raw_args = os.getenv("HERMES_CODEX_GEMINI_ARGS", "").strip()
         args = shlex.split(raw_args) if raw_args else []
+    elif provider_id == "codex-nvidia-cli":
+        command = os.getenv("HERMES_CODEX_NVIDIA_COMMAND", "").strip() or "codex-nvidia"
+        raw_args = os.getenv("HERMES_CODEX_NVIDIA_ARGS", "").strip()
+        args = shlex.split(raw_args) if raw_args else []
+    elif provider_id == "codex-mistral-cli":
+        command = os.getenv("HERMES_CODEX_MISTRAL_COMMAND", "").strip() or "codex-mistral"
+        raw_args = os.getenv("HERMES_CODEX_MISTRAL_ARGS", "").strip()
+        args = shlex.split(raw_args) if raw_args else []
     else:
         return {"configured": False}
     base_url = os.getenv(pconfig.base_url_env_var, "").strip() if pconfig.base_url_env_var else ""
@@ -2653,7 +2677,7 @@ def get_auth_status(provider_id: Optional[str] = None) -> Dict[str, Any]:
         return get_qwen_auth_status()
     if target == "google-gemini-cli":
         return get_gemini_oauth_auth_status()
-    if target in {"copilot-acp", "codex-cerebras-cli", "codex-gemini-cli"}:
+    if target in {"copilot-acp", "codex-cerebras-cli", "codex-gemini-cli", "codex-nvidia-cli", "codex-mistral-cli"}:
         return get_external_process_provider_status(target)
     # API-key providers
     pconfig = PROVIDER_REGISTRY.get(target)
@@ -2737,6 +2761,14 @@ def resolve_external_process_provider_credentials(provider_id: str) -> Dict[str,
         command = os.getenv("HERMES_CODEX_GEMINI_COMMAND", "").strip() or "codex-gemini"
         raw_args = os.getenv("HERMES_CODEX_GEMINI_ARGS", "").strip()
         args = shlex.split(raw_args) if raw_args else []
+    elif provider_id == "codex-nvidia-cli":
+        command = os.getenv("HERMES_CODEX_NVIDIA_COMMAND", "").strip() or "codex-nvidia"
+        raw_args = os.getenv("HERMES_CODEX_NVIDIA_ARGS", "").strip()
+        args = shlex.split(raw_args) if raw_args else []
+    elif provider_id == "codex-mistral-cli":
+        command = os.getenv("HERMES_CODEX_MISTRAL_COMMAND", "").strip() or "codex-mistral"
+        raw_args = os.getenv("HERMES_CODEX_MISTRAL_ARGS", "").strip()
+        args = shlex.split(raw_args) if raw_args else []
     else:
         raise AuthError(
             f"Provider '{provider_id}' is not a supported external-process provider.",
@@ -2766,6 +2798,20 @@ def resolve_external_process_provider_credentials(provider_id: str) -> Dict[str,
                 provider=provider_id,
                 code="missing_codex_gemini_cli",
             )
+        if provider_id == "codex-nvidia-cli":
+            raise AuthError(
+                f"Could not find the Codex NVIDIA command '{command}'. "
+                "Install codex-nvidia or set HERMES_CODEX_NVIDIA_COMMAND.",
+                provider=provider_id,
+                code="missing_codex_nvidia_cli",
+            )
+        if provider_id == "codex-mistral-cli":
+            raise AuthError(
+                f"Could not find the Codex Mistral command '{command}'. "
+                "Install codex-mistral or set HERMES_CODEX_MISTRAL_COMMAND.",
+                provider=provider_id,
+                code="missing_codex_mistral_cli",
+            )
 
     return {
         "provider": provider_id,
@@ -2773,6 +2819,8 @@ def resolve_external_process_provider_credentials(provider_id: str) -> Dict[str,
             "copilot-acp": "copilot-acp",
             "codex-cerebras-cli": "codex-cerebras-cli",
             "codex-gemini-cli": "codex-gemini-cli",
+            "codex-nvidia-cli": "codex-nvidia-cli",
+            "codex-mistral-cli": "codex-mistral-cli",
         }.get(provider_id, provider_id),
         "base_url": base_url.rstrip("/"),
         "command": resolved_command or command,

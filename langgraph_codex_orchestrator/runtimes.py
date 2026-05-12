@@ -7,8 +7,10 @@ import shlex
 import subprocess
 import sys
 import time
+import tempfile
+import threading
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from agent.credential_pool import CredentialPool, STATUS_EXHAUSTED, load_pool
 from openai import OpenAI
@@ -32,6 +34,13 @@ def _progress(message: str) -> None:
     sys.stderr.flush()
 
 
+def _append_tail(text: str, addition: str, limit: int) -> str:
+    combined = f"{text or ''}{addition or ''}"
+    if len(combined) <= limit:
+        return combined
+    return combined[-limit:]
+
+
 @dataclass
 class RuntimeResult:
     ok: bool
@@ -46,6 +55,8 @@ class RuntimeResult:
     tokens_used: int = 0
     request_count: int = 0
     budget_blocked: bool = False
+    stdout_path: str = ""
+    stderr_path: str = ""
 
 
 @dataclass(frozen=True)
@@ -238,6 +249,11 @@ class CodexWorkerRuntime:
                     budget_blocked=True,
                 )
             started = time.time()
+            stdout_path = ""
+            stderr_path = ""
+            last_stdout = ""
+            last_stderr = ""
+            proc = None
             try:
                 env = os.environ.copy()
                 env[self.env_key] = entry.runtime_api_key
@@ -253,19 +269,64 @@ class CodexWorkerRuntime:
                     + f" cwd={cwd or env.get('HERMES_CWD') or os.getcwd()} "
                     + f"provider={self.slot.provider_id} credential={entry.label}"
                 )
-                result = subprocess.run(
-                    argv,
-                    cwd=cwd or env.get("HERMES_CWD") or os.getcwd(),
-                    env=env,
-                    stdin=subprocess.DEVNULL,
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout_seconds,
-                    check=False,
-                )
+                stdout_fd, stdout_path = tempfile.mkstemp(prefix="hermes-stdout-", suffix=".log")
+                stderr_fd, stderr_path = tempfile.mkstemp(prefix="hermes-stderr-", suffix=".log")
+                os.close(stdout_fd)
+                os.close(stderr_fd)
+
+                def pump(stream, sink, kind: str) -> None:
+                    nonlocal last_stdout, last_stderr
+                    try:
+                        for line in iter(stream.readline, ""):
+                            if not line:
+                                break
+                            sink.write(line)
+                            sink.flush()
+                            preview = line.rstrip("\n\r")
+                            if preview:
+                                _progress(f"{kind}: {preview[:240]}")
+                            if kind == "stdout":
+                                last_stdout = _append_tail(last_stdout, line, 4096)
+                            else:
+                                last_stderr = _append_tail(last_stderr, line, 4096)
+                    finally:
+                        try:
+                            stream.close()
+                        except Exception:
+                            pass
+
+                with open(stdout_path, "w", encoding="utf-8", errors="replace") as stdout_file, open(
+                    stderr_path, "w", encoding="utf-8", errors="replace"
+                ) as stderr_file:
+                    proc = subprocess.Popen(
+                        argv,
+                        cwd=cwd or env.get("HERMES_CWD") or os.getcwd(),
+                        env=env,
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        bufsize=1,
+                    )
+                    stdout_thread = threading.Thread(target=pump, args=(proc.stdout, stdout_file, "stdout"), daemon=True)
+                    stderr_thread = threading.Thread(target=pump, args=(proc.stderr, stderr_file, "stderr"), daemon=True)
+                    stdout_thread.start()
+                    stderr_thread.start()
+                    try:
+                        returncode = proc.wait(timeout=timeout_seconds)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        try:
+                            proc.wait(timeout=5)
+                        except Exception:
+                            pass
+                        raise
+                    finally:
+                        stdout_thread.join(timeout=5)
+                        stderr_thread.join(timeout=5)
                 duration = time.time() - started
-                if result.returncode == 0:
-                    completion_tokens = estimate_tokens(result.stdout or "")
+                if returncode == 0:
+                    completion_tokens = estimate_tokens(last_stdout)
                     total_tokens = prompt_tokens + completion_tokens
                     self.quota.record_usage(
                         provider_family=self.slot.provider_family,
@@ -276,7 +337,7 @@ class CodexWorkerRuntime:
                     )
                     return RuntimeResult(
                         ok=True,
-                        text=(result.stdout or "").strip(),
+                        text=(last_stdout or "").strip()[-4096:],
                         provider_id=self.slot.provider_id,
                         model=model or self.slot.model,
                         duration_seconds=duration,
@@ -284,8 +345,10 @@ class CodexWorkerRuntime:
                         credential_label=entry.label,
                         tokens_used=total_tokens,
                         request_count=1,
+                        stdout_path=stdout_path,
+                        stderr_path=stderr_path,
                     )
-                detail = ((result.stderr or "").strip() or (result.stdout or "").strip() or f"exit code {result.returncode}")
+                detail = ((last_stderr or "").strip() or (last_stdout or "").strip() or f"exit code {returncode}")
                 completion_tokens = estimate_tokens(detail)
                 total_tokens = prompt_tokens + completion_tokens
                 self.quota.record_usage(
@@ -301,7 +364,7 @@ class CodexWorkerRuntime:
                     continue
                 return RuntimeResult(
                     ok=False,
-                    text="",
+                    text=(last_stdout or "").strip()[-4096:],
                     provider_id=self.slot.provider_id,
                     model=model or self.slot.model,
                     duration_seconds=duration,
@@ -311,6 +374,8 @@ class CodexWorkerRuntime:
                     rate_limited=False,
                     tokens_used=total_tokens,
                     request_count=1,
+                    stdout_path=stdout_path,
+                    stderr_path=stderr_path,
                 )
             except subprocess.TimeoutExpired:
                 last_error = f"{self.command} timed out after {timeout_seconds}s"
@@ -340,7 +405,110 @@ class CodexWorkerRuntime:
         )
 
 
-def build_family_runtimes(slots: Iterable[ProviderSlot], provider_family: str) -> List[CodexWorkerRuntime]:
+class OllamaWorkerRuntime:
+    def __init__(self, slot: ProviderSlot, *, env_key: str = "OLLAMA_API_KEY") -> None:
+        self.slot = slot
+        self.env_key = env_key
+        self.telemetry = TelemetryStore()
+
+    def _api_key(self) -> str:
+        for key_name in (self.env_key, "OLLAMA_API_KEY", "OPENAI_API_KEY"):
+            value = str(os.environ.get(key_name, "") or "").strip()
+            if value:
+                return value
+        return "ollama"
+
+    def _base_url(self) -> str:
+        return str(self.slot.base_url or os.environ.get("OLLAMA_BASE_URL", "") or "http://127.0.0.1:11434/v1").strip()
+
+    def _call_openai(self, prompt: str, *, model: Optional[str], timeout_seconds: float) -> RuntimeResult:
+        prompt_tokens = estimate_tokens(prompt)
+        started = time.time()
+        try:
+            _progress(
+                f"api call: provider={self.slot.provider_id} credential={self.slot.name} "
+                f"model={model or self.slot.model} mode=ollama prompt_tokens={prompt_tokens}"
+            )
+            client = OpenAI(
+                api_key=self._api_key(),
+                base_url=self._base_url(),
+                timeout=timeout_seconds,
+            )
+            response = client.chat.completions.create(
+                model=model or self.slot.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+            )
+            text = ((response.choices[0].message.content or "") if response.choices else "").strip()
+            duration = time.time() - started
+            completion_tokens = estimate_tokens(text)
+            total_tokens = prompt_tokens + completion_tokens
+            self.telemetry.record_usage(
+                provider_family=self.slot.provider_family,
+                provider_id=self.slot.provider_id,
+                credential_label=self.slot.name,
+                token_count=total_tokens,
+                request_count=1,
+            )
+            return RuntimeResult(
+                ok=True,
+                text=text,
+                provider_id=self.slot.provider_id,
+                model=model or self.slot.model,
+                duration_seconds=duration,
+                attempts=1,
+                credential_label=self.slot.name,
+                tokens_used=total_tokens,
+                request_count=1,
+            )
+        except Exception as exc:
+            detail = str(exc).strip()
+            duration = time.time() - started
+            self.telemetry.record_usage(
+                provider_family=self.slot.provider_family,
+                provider_id=self.slot.provider_id,
+                credential_label=self.slot.name,
+                token_count=prompt_tokens,
+                request_count=1,
+            )
+            return RuntimeResult(
+                ok=False,
+                text="",
+                provider_id=self.slot.provider_id,
+                model=model or self.slot.model,
+                duration_seconds=duration,
+                attempts=1,
+                credential_label=self.slot.name,
+                error=detail,
+                rate_limited=_is_rate_limited(detail),
+                tokens_used=prompt_tokens,
+                request_count=1,
+            )
+
+    def run_fast_prompt(
+        self,
+        prompt: str,
+        *,
+        model: Optional[str] = None,
+        timeout_seconds: float = 120.0,
+    ) -> RuntimeResult:
+        return self._call_openai(prompt, model=model, timeout_seconds=timeout_seconds)
+
+    def run_prompt(
+        self,
+        prompt: str,
+        *,
+        model: Optional[str] = None,
+        cwd: Optional[str] = None,
+        timeout_seconds: float = 1800.0,
+        max_attempts: Optional[int] = None,
+    ) -> RuntimeResult:
+        return self._call_openai(prompt, model=model, timeout_seconds=timeout_seconds)
+
+
+def build_family_runtimes(slots: Iterable[ProviderSlot], provider_family: str) -> List[Any]:
+    if provider_family == "ollama":
+        return [OllamaWorkerRuntime(slot) for slot in slots]
     if provider_family == "gemini":
         return [CodexWorkerRuntime(slot, command="codex-gemini", env_key="GEMINI_API_KEY") for slot in slots]
     return [CodexWorkerRuntime(slot, command="codex-cerebras", env_key="CEREBRAS_API_KEY") for slot in slots]

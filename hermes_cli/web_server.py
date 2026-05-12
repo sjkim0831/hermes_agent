@@ -21,6 +21,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+from collections import deque
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -46,6 +47,8 @@ from hermes_cli.config import (
     redact_key,
 )
 from gateway.status import get_running_pid, read_runtime_status
+from langgraph_codex_orchestrator.quota import QuotaStore
+from langgraph_codex_orchestrator.telemetry import RunStateStore, TelemetryStore
 
 try:
     from fastapi import FastAPI, HTTPException, Request
@@ -101,6 +104,63 @@ _PUBLIC_API_PATHS: frozenset = frozenset({
     "/api/dashboard/plugins",
     "/api/dashboard/plugins/rescan",
 })
+
+_ORCH_RUN_STORE = RunStateStore()
+_ORCH_TELEMETRY_STORE = TelemetryStore()
+_ORCH_QUOTA_STORE = QuotaStore()
+
+
+def _tail_jsonl(path: Path, limit: int = 200) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    rows: deque[dict[str, Any]] = deque(maxlen=limit)
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                text = line.strip()
+                if not text:
+                    continue
+                try:
+                    obj = json.loads(text)
+                except Exception:
+                    continue
+                if isinstance(obj, dict):
+                    rows.append(obj)
+    except Exception:
+        return []
+    return list(rows)
+
+
+def _load_json_file(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _stage_snapshot(stage: dict[str, Any]) -> dict[str, Any]:
+    shards = [dict(shard) for shard in stage.get("shards") or []]
+    running = [shard for shard in shards if shard.get("status") == "running"]
+    retrying = [shard for shard in shards if shard.get("status") == "retrying"]
+    failed = [shard for shard in shards if shard.get("status") == "failed"]
+    completed = [shard for shard in shards if shard.get("status") == "completed"]
+    pending = [shard for shard in shards if shard.get("status") == "pending"]
+    return {
+        "role": stage.get("role"),
+        "status": stage.get("status", "pending"),
+        "planned_workers": int(stage.get("planned_workers") or 0),
+        "provider_family": stage.get("provider_family") or "",
+        "completed_shards": len(completed),
+        "failed_shards": len(failed),
+        "retried_shards": int(stage.get("retried_shards") or 0),
+        "running_shards": len(running),
+        "retrying_shards": len(retrying),
+        "pending_shards": len(pending),
+        "shards": shards,
+    }
 
 
 def _require_token(request: Request) -> None:
@@ -474,6 +534,48 @@ async def get_status():
         "gateway_exit_reason": gateway_exit_reason,
         "gateway_updated_at": gateway_updated_at,
         "active_sessions": active_sessions,
+    }
+
+
+@app.get("/api/orchestrator/current")
+async def get_orchestrator_current():
+    run = _ORCH_RUN_STORE.snapshot()
+    telemetry = _ORCH_TELEMETRY_STORE.load()
+    quota = _ORCH_QUOTA_STORE.summary()
+    events = _tail_jsonl(_ORCH_TELEMETRY_STORE.event_log_path, limit=120)
+    stages = {
+        role: _stage_snapshot(stage)
+        for role, stage in (run.get("stages") or {}).items()
+        if isinstance(stage, dict)
+    }
+    active_stage = next((stage for stage in stages.values() if stage.get("status") == "running"), None)
+    shard_rows = [
+        {
+            **dict(shard),
+            "role": role,
+            "stage_status": stage.get("status"),
+        }
+        for role, stage in stages.items()
+        for shard in stage.get("shards") or []
+    ]
+    shard_rows.sort(key=lambda item: (str(item.get("role") or ""), int(item.get("shard_index") or 0)))
+    return {
+        "run_id": run.get("run_id"),
+        "status": run.get("status", "idle"),
+        "completion_status": run.get("completion_status", "idle"),
+        "task": run.get("task", ""),
+        "cwd": run.get("cwd", ""),
+        "task_type": run.get("task_type", ""),
+        "difficulty": run.get("difficulty", 0),
+        "estimated_tokens": run.get("estimated_tokens", 0),
+        "updated_at": run.get("updated_at"),
+        "stage_order": run.get("stage_order") or [],
+        "stages": stages,
+        "active_stage": active_stage,
+        "shards": shard_rows,
+        "recent_events": events[-60:],
+        "telemetry": telemetry,
+        "quota": quota,
     }
 
 

@@ -3,7 +3,7 @@ import { promisify } from 'node:util'
 
 import { useEffect, useState } from 'react'
 
-const TTL_MS = 15_000
+const TTL_MS = 300_000
 const TIMEOUT_MS = 500
 
 const pexec = promisify(execFile)

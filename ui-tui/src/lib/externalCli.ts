@@ -17,6 +17,21 @@ interface LaunchSpec {
   file: string
 }
 
+const CAPTURE_TAIL_CHARS = 64 * 1024
+const LINE_BUFFER_TAIL_CHARS = 4 * 1024
+
+const appendTail = (current: string, chunk: string, limit = CAPTURE_TAIL_CHARS) => {
+  const next = current + chunk
+
+  if (next.length <= limit) {
+    return next
+  }
+
+  return next.slice(-limit)
+}
+
+const appendLineBufferTail = (current: string, chunk: string) => appendTail(current, chunk, LINE_BUFFER_TAIL_CHARS)
+
 const resolvePythonModuleLaunch = (
   moduleName: string,
   args: string[],
@@ -85,10 +100,10 @@ export const launchHermesOrchestratorCaptured = (args: string[]): Promise<Launch
     let stderr = ''
 
     child.stdout?.on('data', chunk => {
-      stdout += String(chunk)
+      stdout = appendTail(stdout, String(chunk))
     })
     child.stderr?.on('data', chunk => {
-      stderr += String(chunk)
+      stderr = appendTail(stderr, String(chunk))
     })
 
     child.on('error', err => resolve({ code: null, error: err.message, stderr, stdout }))
@@ -124,14 +139,14 @@ export const launchHermesOrchestratorStreaming = (
 
     child.stdout?.on('data', chunk => {
       const text = String(chunk)
-      stdout += text
-      stdoutBuf += text
+      stdout = appendTail(stdout, text)
+      stdoutBuf = appendLineBufferTail(stdoutBuf, text)
       stdoutBuf = flushLines(stdoutBuf, handlers.onStdoutLine)
     })
     child.stderr?.on('data', chunk => {
       const text = String(chunk)
-      stderr += text
-      stderrBuf += text
+      stderr = appendTail(stderr, text)
+      stderrBuf = appendLineBufferTail(stderrBuf, text)
       stderrBuf = flushLines(stderrBuf, handlers.onStderrLine)
     })
 

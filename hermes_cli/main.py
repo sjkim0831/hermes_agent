@@ -990,11 +990,23 @@ def _launch_tui(resume_session_id: Optional[str] = None, tui_dev: bool = False):
     )
     env.setdefault("HERMES_PYTHON", sys.executable)
     env.setdefault("HERMES_CWD", os.getcwd())
-    # The TUI is a long-lived Node process. On larger repos or long sessions,
-    # the default V8 heap ceiling can be too small and crash with
-    # "JavaScript heap out of memory". Use a larger default while still
-    # respecting an explicit max-old-space-size already present in NODE_OPTIONS.
-    heap_mb = (env.get("HERMES_TUI_HEAP_MB") or "8192").strip() or "8192"
+    env.setdefault("COLUMNS", "120")
+    env.setdefault("LINES", "30")
+    try:
+        subprocess.run(
+            ["stty", "cols", env["COLUMNS"], "rows", env["LINES"]],
+            check=False,
+            stderr=subprocess.DEVNULL,
+            stdin=sys.stdin,
+            stdout=subprocess.DEVNULL,
+        )
+    except Exception:
+        pass
+
+    # The TUI keeps only a bounded live transcript, so the default Node heap
+    # should be modest. Operators can still raise it explicitly with
+    # HERMES_TUI_HEAP_MB for unusually large local sessions.
+    heap_mb = (env.get("HERMES_TUI_HEAP_MB") or "12288").strip() or "12288"
     node_options = (env.get("NODE_OPTIONS") or "").strip()
     if "--max-old-space-size=" not in node_options:
         env["NODE_OPTIONS"] = f"--max-old-space-size={heap_mb} {node_options}".strip()
@@ -1437,7 +1449,7 @@ def select_provider_and_model(args=None):
                 continue
             key = "custom:" + name.lower().replace(" ", "-")
             provider_key = (entry.get("provider_key") or "").strip()
-            if provider_key and provider_key not in {"codex-cerebras-cli", "codex-gemini-cli"}:
+            if provider_key and provider_key not in {"codex-cerebras-cli", "codex-gemini-cli", "codex-nvidia-cli", "codex-mistral-cli"}:
                 try:
                     resolve_provider(provider_key)
                 except AuthError:
@@ -2827,7 +2839,7 @@ def _model_flow_named_custom(config, provider_info):
         model = {"default": model} if model else {}
     cfg["model"] = model
     if provider_key:
-        model["provider"] = selected_custom_slug if provider_key in {"codex-cerebras-cli", "codex-gemini-cli"} else provider_key
+        model["provider"] = selected_custom_slug if provider_key in {"codex-cerebras-cli", "codex-gemini-cli", "codex-nvidia-cli", "codex-mistral-cli"} else provider_key
         model.pop("base_url", None)
         model.pop("api_key", None)
     else:
@@ -6274,8 +6286,13 @@ def cmd_dashboard(args):
         print(f"Install them with:  {sys.executable} -m pip install 'fastapi' 'uvicorn[standard]'")
         sys.exit(1)
 
-    if "HERMES_WEB_DIST" not in os.environ:
-        if not _build_web_ui(PROJECT_ROOT / "web", fatal=True):
+    web_dist = Path(os.environ.get("HERMES_WEB_DIST") or (PROJECT_ROOT / "hermes_cli" / "web_dist"))
+    if not (web_dist / "index.html").exists():
+        if "HERMES_WEB_DIST" not in os.environ:
+            if not _build_web_ui(PROJECT_ROOT / "web", fatal=True):
+                sys.exit(1)
+        elif not web_dist.exists():
+            print(f"Web UI dist not found at {web_dist}")
             sys.exit(1)
 
     from hermes_cli.web_server import start_server

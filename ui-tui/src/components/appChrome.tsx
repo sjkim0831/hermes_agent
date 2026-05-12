@@ -3,7 +3,6 @@ import { type ReactNode, type RefObject, useCallback, useEffect, useState, useSy
 
 import { FACES } from '../content/faces.js'
 import { VERBS } from '../content/verbs.js'
-import { fmtDuration } from '../domain/messages.js'
 import { stickyPromptFromViewport } from '../domain/viewport.js'
 import { fmtK } from '../lib/text.js'
 import type { Theme } from '../theme.js'
@@ -56,16 +55,9 @@ function ctxBar(pct: number | undefined, w = 10) {
 }
 
 function SessionDuration({ startedAt }: { startedAt: number }) {
-  const [now, setNow] = useState(() => Date.now())
+  const started = new Date(startedAt)
 
-  useEffect(() => {
-    setNow(Date.now())
-    const id = setInterval(() => setNow(Date.now()), 1000)
-
-    return () => clearInterval(id)
-  }, [startedAt])
-
-  return fmtDuration(now - startedAt)
+  return `${started.getHours().toString().padStart(2, '0')}:${started.getMinutes().toString().padStart(2, '0')}`
 }
 
 export function GoodVibesHeart({ tick, t }: { tick: number; t: Theme }) {

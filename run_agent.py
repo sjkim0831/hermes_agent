@@ -4787,6 +4787,36 @@ class AIAgent:
                 self._client_log_context(),
             )
             return client
+        if self.provider == "codex-nvidia-cli" or str(client_kwargs.get("base_url", "")).startswith("codex+nvidia://"):
+            from agent.codex_nvidia_cli_client import CodexNvidiaCLIClient
+
+            safe_kwargs = {
+                k: v for k, v in client_kwargs.items()
+                if k in {"api_key", "base_url", "command", "args"}
+            }
+            client = CodexNvidiaCLIClient(**safe_kwargs)
+            logger.info(
+                "Codex NVIDIA CLI client created (%s, shared=%s) %s",
+                reason,
+                shared,
+                self._client_log_context(),
+            )
+            return client
+        if self.provider == "codex-mistral-cli" or str(client_kwargs.get("base_url", "")).startswith("codex+mistral://"):
+            from agent.codex_mistral_cli_client import CodexMistralCLIClient
+
+            safe_kwargs = {
+                k: v for k, v in client_kwargs.items()
+                if k in {"api_key", "base_url", "command", "args"}
+            }
+            client = CodexMistralCLIClient(**safe_kwargs)
+            logger.info(
+                "Codex Mistral CLI client created (%s, shared=%s) %s",
+                reason,
+                shared,
+                self._client_log_context(),
+            )
+            return client
         if self.provider == "google-gemini-cli" or str(client_kwargs.get("base_url", "")).startswith("cloudcode-pa://"):
             from agent.gemini_cloudcode_adapter import GeminiCloudCodeClient
 

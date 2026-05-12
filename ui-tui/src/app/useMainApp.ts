@@ -3,7 +3,15 @@ import { useStore } from '@nanostores/react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { STARTUP_RESUME_ID } from '../config/env.js'
-import { MAX_HISTORY, WHEEL_SCROLL_STEP } from '../config/limits.js'
+import {
+  MAX_HISTORY,
+  MAX_HISTORY_CHARS,
+  MAX_MESSAGE_CHARS,
+  MAX_PANEL_SECTION_CHARS,
+  MAX_REASONING_CHARS,
+  MAX_TOOL_CONTEXT_CHARS,
+  WHEEL_SCROLL_STEP
+} from '../config/limits.js'
 import { imageTokenMeta } from '../domain/messages.js'
 import { fmtCwdBranch } from '../domain/paths.js'
 import { type GatewayClient } from '../gatewayClient.js'
@@ -36,13 +44,87 @@ import { useSubmission } from './useSubmission.js'
 const GOOD_VIBES_RE = /\b(good bot|thanks|thank you|thx|ty|ily|love you)\b/i
 const BRACKET_PASTE_ON = '\x1b[?2004h'
 const BRACKET_PASTE_OFF = '\x1b[?2004l'
+const clampTerminalColumns = (value: number | undefined) => {
+  const n = Number(value)
 
-const capHistory = (items: Msg[]): Msg[] => {
-  if (items.length <= MAX_HISTORY) {
-    return items
+  return Number.isFinite(n) && n >= 20 && n <= 320 ? Math.floor(n) : 120
+}
+
+const TRUNCATED_PREFIX = '...[truncated]\n'
+
+const capMiddle = (text: string, limit: number) => {
+  if (text.length <= limit) {
+    return text
   }
 
-  return items[0]?.kind === 'intro' ? [items[0]!, ...items.slice(-(MAX_HISTORY - 1))] : items.slice(-MAX_HISTORY)
+  const budget = Math.max(0, limit - TRUNCATED_PREFIX.length)
+  const head = Math.floor(budget * 0.35)
+  const tail = Math.max(0, budget - head)
+
+  return `${text.slice(0, head)}${TRUNCATED_PREFIX}${text.slice(-tail)}`
+}
+
+const textSize = (value: unknown): number => {
+  if (typeof value === 'string') {
+    return value.length
+  }
+
+  if (Array.isArray(value)) {
+    return value.reduce((sum, item) => sum + textSize(item), 0)
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>).reduce<number>((sum, item) => sum + textSize(item), 0)
+  }
+
+  return 0
+}
+
+const sanitizeMessage = (msg: Msg): Msg => {
+  const next: Msg = { ...msg }
+  const mutable = next as Msg & { panelData?: { sections?: PanelSection[]; title?: string }; thinking?: string; tools?: string[] }
+
+  if (typeof mutable.text === 'string') {
+    mutable.text = capMiddle(mutable.text, MAX_MESSAGE_CHARS)
+  }
+
+  if (typeof mutable.thinking === 'string') {
+    mutable.thinking = capMiddle(mutable.thinking, MAX_REASONING_CHARS)
+  }
+
+  if (Array.isArray(mutable.tools)) {
+    mutable.tools = mutable.tools.slice(-24).map(line => capMiddle(String(line), MAX_TOOL_CONTEXT_CHARS))
+  }
+
+  if (mutable.panelData?.sections) {
+    mutable.panelData = {
+      ...mutable.panelData,
+      sections: mutable.panelData.sections.map(section => ({
+        ...section,
+        text: typeof section.text === 'string' ? capMiddle(section.text, MAX_PANEL_SECTION_CHARS) : section.text
+      }))
+    }
+  }
+
+  return next
+}
+
+const capHistory = (items: Msg[]): Msg[] => {
+  let next = items.map(sanitizeMessage)
+
+  if (next.length > MAX_HISTORY) {
+    next = next[0]?.kind === 'intro' ? [next[0]!, ...next.slice(-(MAX_HISTORY - 1))] : next.slice(-MAX_HISTORY)
+  }
+
+  let total = next.reduce((sum, item) => sum + textSize(item), 0)
+
+  while (next.length > 1 && total > MAX_HISTORY_CHARS) {
+    const removableIndex = next[0]?.kind === 'intro' ? 1 : 0
+    const [removed] = next.splice(removableIndex, 1)
+    total -= textSize(removed)
+  }
+
+  return next
 }
 
 const statusColorOf = (status: string, t: { dim: string; error: string; ok: string; warn: string }) => {
@@ -70,14 +152,14 @@ interface SelectionSnap {
 export function useMainApp(gw: GatewayClient) {
   const { exit } = useApp()
   const { stdout } = useStdout()
-  const [cols, setCols] = useState(stdout?.columns ?? 80)
+  const [cols, setCols] = useState(clampTerminalColumns(stdout?.columns))
 
   useEffect(() => {
     if (!stdout) {
       return
     }
 
-    const sync = () => setCols(stdout.columns ?? 80)
+    const sync = () => setCols(clampTerminalColumns(stdout.columns))
 
     stdout.on('resize', sync)
 
@@ -298,7 +380,7 @@ export function useMainApp(gw: GatewayClient) {
     }
 
     const onResize = () =>
-      rpc<TerminalResizeResponse>('terminal.resize', { cols: stdout.columns ?? 80, session_id: ui.sid })
+      rpc<TerminalResizeResponse>('terminal.resize', { cols: clampTerminalColumns(stdout.columns), session_id: ui.sid })
 
     stdout.on('resize', onResize)
 
